@@ -25,6 +25,11 @@ import {
   Link as LinkIcon,
   AlertCircle,
   GitCompareArrows,
+  Reply,
+  Pencil,
+  Trash2,
+  X,
+  ArrowUpRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -130,6 +135,15 @@ export default function VideoPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+
+  // Reply/Edit/Delete state
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [isSubmittingReply, setIsSubmittingReply] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
 
   // New version dialog
   const [showVersionDialog, setShowVersionDialog] = useState(false);
@@ -392,6 +406,141 @@ export default function VideoPage() {
     },
     [activeVersionId]
   );
+
+  // Reply to a comment
+  const handleReplyComment = useCallback(async (parentId: string) => {
+    if (!replyText.trim() || !activeVersion) return;
+    setIsSubmittingReply(true);
+    try {
+      const res = await fetch(`/api/versions/${activeVersion.id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: replyText,
+          timestamp: comments.find((c) => c.id === parentId)?.timestamp ?? currentTime,
+          parentId,
+        }),
+      });
+      if (res.ok) {
+        const newReply = await res.json();
+        setVideo((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            versions: prev.versions.map((v) =>
+              v.id === activeVersionId
+                ? {
+                    ...v,
+                    comments: v.comments.map((c) =>
+                      c.id === parentId
+                        ? { ...c, replies: [...c.replies, newReply] }
+                        : c
+                    ),
+                  }
+                : v
+            ),
+          };
+        });
+        setReplyText('');
+        setReplyingTo(null);
+      }
+    } catch (err) {
+      console.error('Failed to reply:', err);
+    } finally {
+      setIsSubmittingReply(false);
+    }
+  }, [replyText, activeVersion, activeVersionId, comments, currentTime]);
+
+  // Edit a comment
+  const handleEditComment = useCallback(async (commentId: string) => {
+    if (!editText.trim()) return;
+    setIsSubmittingEdit(true);
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editText }),
+      });
+      if (res.ok) {
+        setVideo((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            versions: prev.versions.map((v) =>
+              v.id === activeVersionId
+                ? {
+                    ...v,
+                    comments: v.comments.map((c) => {
+                      if (c.id === commentId) return { ...c, content: editText.trim() };
+                      return {
+                        ...c,
+                        replies: c.replies.map((r) =>
+                          r.id === commentId ? { ...r, content: editText.trim() } : r
+                        ),
+                      };
+                    }),
+                  }
+                : v
+            ),
+          };
+        });
+        setEditingCommentId(null);
+        setEditText('');
+      }
+    } catch (err) {
+      console.error('Failed to edit comment:', err);
+    } finally {
+      setIsSubmittingEdit(false);
+    }
+  }, [editText, activeVersionId]);
+
+  // Delete a comment
+  const handleDeleteComment = useCallback(async (commentId: string) => {
+    setDeletingCommentId(commentId);
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setVideo((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            versions: prev.versions.map((v) =>
+              v.id === activeVersionId
+                ? {
+                    ...v,
+                    comments: v.comments
+                      .filter((c) => c.id !== commentId)
+                      .map((c) => ({
+                        ...c,
+                        replies: c.replies.filter((r) => r.id !== commentId),
+                      })),
+                  }
+                : v
+            ),
+          };
+        });
+      }
+    } catch (err) {
+      console.error('Failed to delete comment:', err);
+    } finally {
+      setDeletingCommentId(null);
+    }
+  }, [activeVersionId]);
+
+  // Poll for new comments every 10 seconds
+  useEffect(() => {
+    if (!activeVersion) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/videos/${videoId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setVideo(data);
+        }
+      } catch { /* silent */ }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [activeVersion, projectId, videoId]);
 
   // New version URL handler
   const handleNewVersionUrlChange = (url: string) => {
@@ -781,6 +930,8 @@ export default function VideoPage() {
                 .map((comment) => {
                   const authorName =
                     comment.author?.name || comment.guestName || 'Anonymous';
+                  const isEditing = editingCommentId === comment.id;
+                  const isReplying = replyingTo === comment.id;
                   return (
                     <div
                       key={comment.id}
@@ -803,10 +954,12 @@ export default function VideoPage() {
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleSeekToTimestamp(comment.timestamp)}
-                            className="flex items-center gap-1 text-xs text-primary hover:underline px-1.5 py-0.5 rounded bg-primary/10"
+                            className="flex items-center gap-1 text-xs text-primary hover:underline px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
+                            title="Jump to this timestamp"
                           >
                             <Clock className="h-3 w-3" />
                             {formatTime(comment.timestamp)}
+                            <ArrowUpRight className="h-3 w-3" />
                           </button>
                           <Button
                             variant="ghost"
@@ -833,9 +986,25 @@ export default function VideoPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem>Reply</DropdownMenuItem>
-                              <DropdownMenuItem>Edit</DropdownMenuItem>
-                              <DropdownMenuItem className="text-destructive">
+                              <DropdownMenuItem onClick={() => {
+                                setReplyingTo(comment.id);
+                                setReplyText('');
+                              }}>
+                                <Reply className="h-4 w-4 mr-2" />
+                                Reply
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => {
+                                setEditingCommentId(comment.id);
+                                setEditText(comment.content || '');
+                              }}>
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => handleDeleteComment(comment.id)}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
                                 Delete
                               </DropdownMenuItem>
                             </DropdownMenuContent>
@@ -843,7 +1012,46 @@ export default function VideoPage() {
                         </div>
                       </div>
 
-                      {comment.content && <p className="text-sm mb-2">{comment.content}</p>}
+                      {isEditing ? (
+                        <div className="mb-2">
+                          <Textarea
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            rows={2}
+                            className="resize-none text-sm mb-1"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                handleEditComment(comment.id);
+                              }
+                              if (e.key === 'Escape') {
+                                setEditingCommentId(null);
+                                setEditText('');
+                              }
+                            }}
+                          />
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              onClick={() => handleEditComment(comment.id)}
+                              disabled={!editText.trim() || isSubmittingEdit}
+                              className="h-7 text-xs"
+                            >
+                              {isSubmittingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => { setEditingCommentId(null); setEditText(''); }}
+                              className="h-7 text-xs"
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        comment.content && <p className="text-sm mb-2">{comment.content}</p>
+                      )}
 
                       {comment.voiceUrl && (
                         <div className="flex items-center gap-2 p-2 bg-muted rounded mb-2">
@@ -863,29 +1071,151 @@ export default function VideoPage() {
                         {new Date(comment.createdAt).toLocaleDateString()}
                       </p>
 
+                      {/* Replies */}
                       {comment.replies.length > 0 && (
                         <div className="mt-3 pl-3 border-l-2 space-y-2">
                           {comment.replies.map((reply) => {
                             const replyAuthor =
                               reply.author?.name || reply.guestName || 'Anonymous';
+                            const isEditingReply = editingCommentId === reply.id;
                             return (
-                              <div key={reply.id} className="text-sm">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <Avatar className="h-5 w-5">
-                                    <AvatarFallback className="text-xs">
-                                      {replyAuthor.charAt(0)}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <span className="font-medium text-xs">{replyAuthor}</span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {new Date(reply.createdAt).toLocaleDateString()}
-                                  </span>
+                              <div key={reply.id} className="group/reply text-sm">
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <div className="flex items-center gap-2">
+                                    <Avatar className="h-5 w-5">
+                                      <AvatarFallback className="text-xs">
+                                        {replyAuthor.charAt(0)}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <span className="font-medium text-xs">{replyAuthor}</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {new Date(reply.createdAt).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-5 w-5 opacity-0 group-hover/reply:opacity-100 shrink-0"
+                                      >
+                                        <MoreVertical className="h-3 w-3" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem onClick={() => {
+                                        setEditingCommentId(reply.id);
+                                        setEditText(reply.content || '');
+                                      }}>
+                                        <Pencil className="h-4 w-4 mr-2" />
+                                        Edit
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        className="text-destructive"
+                                        onClick={() => handleDeleteComment(reply.id)}
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
-                                <p className="text-sm">{reply.content}</p>
+                                {isEditingReply ? (
+                                  <div className="mb-1">
+                                    <Textarea
+                                      value={editText}
+                                      onChange={(e) => setEditText(e.target.value)}
+                                      rows={2}
+                                      className="resize-none text-sm mb-1"
+                                      autoFocus
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                          handleEditComment(reply.id);
+                                        }
+                                        if (e.key === 'Escape') {
+                                          setEditingCommentId(null);
+                                          setEditText('');
+                                        }
+                                      }}
+                                    />
+                                    <div className="flex gap-1">
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleEditComment(reply.id)}
+                                        disabled={!editText.trim() || isSubmittingEdit}
+                                        className="h-7 text-xs"
+                                      >
+                                        {isSubmittingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => { setEditingCommentId(null); setEditText(''); }}
+                                        className="h-7 text-xs"
+                                      >
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="text-sm">{reply.content}</p>
+                                )}
                               </div>
                             );
                           })}
                         </div>
+                      )}
+
+                      {/* Inline reply form */}
+                      {isReplying && (
+                        <div className="mt-3 pl-3 border-l-2">
+                          <Textarea
+                            value={replyText}
+                            onChange={(e) => setReplyText(e.target.value)}
+                            placeholder="Write a reply..."
+                            rows={2}
+                            className="resize-none text-sm mb-1"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                handleReplyComment(comment.id);
+                              }
+                              if (e.key === 'Escape') {
+                                setReplyingTo(null);
+                                setReplyText('');
+                              }
+                            }}
+                          />
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              onClick={() => handleReplyComment(comment.id)}
+                              disabled={!replyText.trim() || isSubmittingReply}
+                              className="h-7 text-xs"
+                            >
+                              {isSubmittingReply ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reply'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => { setReplyingTo(null); setReplyText(''); }}
+                              className="h-7 text-xs"
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Quick reply button */}
+                      {!isReplying && !isEditing && (
+                        <button
+                          onClick={() => { setReplyingTo(comment.id); setReplyText(''); }}
+                          className="mt-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                        >
+                          <Reply className="h-3 w-3" />
+                          Reply
+                        </button>
                       )}
                     </div>
                   );
