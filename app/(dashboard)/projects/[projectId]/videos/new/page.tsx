@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, Link as LinkIcon, AlertCircle, CheckCircle2 } from 'lucide-react';
@@ -9,31 +9,59 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { parseVideoUrl, getThumbnailUrl, type VideoSource } from '@/lib/video-providers';
+import { parseVideoUrl, fetchVideoMetadata, getThumbnailUrl, type VideoSource } from '@/lib/video-providers';
 
 export default function NewVideoPage() {
   const router = useRouter();
   const params = useParams();
   const projectId = params.projectId as string;
-  
+
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetchingMeta, setIsFetchingMeta] = useState(false);
   const [videoUrl, setVideoUrl] = useState('');
   const [videoSource, setVideoSource] = useState<VideoSource | null>(null);
   const [urlError, setUrlError] = useState('');
+  const [submitError, setSubmitError] = useState('');
   const [formData, setFormData] = useState({
     title: '',
     description: '',
   });
 
+  // Auto-fetch metadata when a valid video source is detected
+  useEffect(() => {
+    if (!videoSource) return;
+
+    let cancelled = false;
+    setIsFetchingMeta(true);
+
+    fetchVideoMetadata(videoSource).then((meta) => {
+      if (cancelled || !meta) {
+        setIsFetchingMeta(false);
+        return;
+      }
+      if (!formData.title) {
+        setFormData((prev) => ({ ...prev, title: meta.title }));
+      }
+      setVideoSource((prev) => (prev ? { ...prev, metadata: meta } : prev));
+      setIsFetchingMeta(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoSource?.videoId, videoSource?.providerId]);
+
   const handleUrlChange = (url: string) => {
     setVideoUrl(url);
     setUrlError('');
-    
+    setSubmitError('');
+
     if (!url.trim()) {
       setVideoSource(null);
       return;
     }
-    
+
     const source = parseVideoUrl(url);
     if (source) {
       setVideoSource(source);
@@ -47,31 +75,43 @@ export default function NewVideoPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!videoSource) {
       setUrlError('Please enter a valid video URL');
       return;
     }
-    
+
     setIsLoading(true);
+    setSubmitError('');
 
     try {
-      // TODO: Implement actual video creation
-      // const response = await fetch(`/api/projects/${projectId}/videos`, {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({
-      //     ...formData,
-      //     ...videoSource,
-      //   }),
-      // });
-      
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
+      const thumbnailUrl = getThumbnailUrl(videoSource, 'large');
+      const title = formData.title.trim() || videoSource.metadata?.title || 'Untitled Video';
+
+      const response = await fetch(`/api/projects/${projectId}/videos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          description: formData.description.trim() || null,
+          videoUrl: videoSource.originalUrl,
+          providerId: videoSource.providerId,
+          videoId: videoSource.videoId,
+          thumbnailUrl,
+          duration: videoSource.metadata?.duration || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        setSubmitError(data.error || 'Failed to add video');
+        return;
+      }
+
       router.push(`/projects/${projectId}`);
     } catch (error) {
       console.error('Failed to add video:', error);
+      setSubmitError('An unexpected error occurred');
     } finally {
       setIsLoading(false);
     }
@@ -80,9 +120,9 @@ export default function NewVideoPage() {
   const thumbnailUrl = videoSource ? getThumbnailUrl(videoSource, 'large') : null;
 
   return (
-    <div className="container max-w-2xl py-8">
+    <div className="container max-w-2xl mx-auto py-8">
       <div className="mb-6">
-        <Link 
+        <Link
           href={`/projects/${projectId}`}
           className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
@@ -115,19 +155,19 @@ export default function NewVideoPage() {
                   disabled={isLoading}
                 />
               </div>
-              
-              {/* URL validation feedback */}
+
               {urlError && (
                 <p className="text-sm text-destructive flex items-center gap-1">
                   <AlertCircle className="h-4 w-4" />
                   {urlError}
                 </p>
               )}
-              
+
               {videoSource && (
                 <p className="text-sm text-green-600 flex items-center gap-1">
                   <CheckCircle2 className="h-4 w-4" />
                   {videoSource.providerId.charAt(0).toUpperCase() + videoSource.providerId.slice(1)} video detected
+                  {isFetchingMeta && ' — fetching metadata...'}
                 </p>
               )}
             </div>
@@ -151,9 +191,9 @@ export default function NewVideoPage() {
               <Label htmlFor="title">Title</Label>
               <Input
                 id="title"
-                placeholder="Video title (will auto-fill from video if empty)"
+                placeholder={isFetchingMeta ? 'Fetching title...' : 'Video title (will auto-fill from video if empty)'}
                 value={formData.title}
-                onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
                 disabled={isLoading}
               />
               <p className="text-xs text-muted-foreground">
@@ -168,11 +208,18 @@ export default function NewVideoPage() {
                 id="description"
                 placeholder="Add context about this video..."
                 value={formData.description}
-                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
                 rows={3}
                 disabled={isLoading}
               />
             </div>
+
+            {submitError && (
+              <p className="text-sm text-destructive flex items-center gap-1">
+                <AlertCircle className="h-4 w-4" />
+                {submitError}
+              </p>
+            )}
 
             <div className="flex gap-3">
               <Button type="submit" disabled={isLoading || !videoSource}>

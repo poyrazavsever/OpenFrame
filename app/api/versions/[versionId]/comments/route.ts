@@ -34,9 +34,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const project = version.video.project;
         const isOwner = session?.user?.id === project.ownerId;
         const isMember = project.members.length > 0;
-        const isPublicOrLink = project.visibility !== 'PRIVATE';
+        const isPublic = project.visibility === 'PUBLIC';
 
-        if (!isOwner && !isMember && !isPublicOrLink) {
+        if (!isOwner && !isMember && !isPublic) {
             return NextResponse.json({ error: 'Access denied' }, { status: 403 });
         }
 

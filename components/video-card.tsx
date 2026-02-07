@@ -1,21 +1,48 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { 
+import { useRouter } from 'next/navigation';
+import {
   Play,
   MessageSquare,
   Clock,
-  MoreVertical
+  MoreVertical,
+  Loader2,
+  Link as LinkIcon,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { parseVideoUrl, fetchVideoMetadata, getThumbnailUrl, type VideoSource } from '@/lib/video-providers';
 
 interface VideoCardProps {
   video: {
@@ -31,65 +58,308 @@ interface VideoCardProps {
 }
 
 export function VideoCard({ video, projectId }: VideoCardProps) {
+  const router = useRouter();
+
+  // Edit dialog
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editTitle, setEditTitle] = useState(video.title);
+  const [editDescription, setEditDescription] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  // Add Version dialog
+  const [showVersionDialog, setShowVersionDialog] = useState(false);
+  const [versionUrl, setVersionUrl] = useState('');
+  const [versionLabel, setVersionLabel] = useState('');
+  const [versionSource, setVersionSource] = useState<VideoSource | null>(null);
+  const [versionUrlError, setVersionUrlError] = useState('');
+  const [isCreatingVersion, setIsCreatingVersion] = useState(false);
+
+  // Delete dialog
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleEdit = async () => {
+    setIsSaving(true);
+    setEditError('');
+    try {
+      const res = await fetch(`/api/projects/${projectId}/videos/${video.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          description: editDescription.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setEditError(data.error || 'Failed to update video');
+        return;
+      }
+      setShowEditDialog(false);
+      router.refresh();
+    } catch {
+      setEditError('An unexpected error occurred');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleVersionUrlChange = (url: string) => {
+    setVersionUrl(url);
+    setVersionUrlError('');
+    if (!url.trim()) {
+      setVersionSource(null);
+      return;
+    }
+    const source = parseVideoUrl(url);
+    if (source) {
+      setVersionSource(source);
+    } else {
+      setVersionSource(null);
+      if (url.length > 10) setVersionUrlError('Unsupported URL');
+    }
+  };
+
+  const handleCreateVersion = async () => {
+    if (!versionSource) return;
+    setIsCreatingVersion(true);
+    try {
+      const meta = await fetchVideoMetadata(versionSource);
+      const thumbnailUrl = getThumbnailUrl(versionSource, 'large');
+
+      const res = await fetch(`/api/projects/${projectId}/videos/${video.id}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: versionSource.originalUrl,
+          providerId: versionSource.providerId,
+          providerVideoId: versionSource.videoId,
+          versionLabel: versionLabel.trim() || null,
+          thumbnailUrl,
+          duration: meta?.duration || null,
+          setActive: true,
+        }),
+      });
+      if (res.ok) {
+        setShowVersionDialog(false);
+        setVersionUrl('');
+        setVersionLabel('');
+        setVersionSource(null);
+        router.refresh();
+      }
+    } catch (err) {
+      console.error('Failed to create version:', err);
+    } finally {
+      setIsCreatingVersion(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/videos/${video.id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setShowDeleteDialog(false);
+        router.refresh();
+      }
+    } catch (err) {
+      console.error('Failed to delete video:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
-    <Card className="group overflow-hidden transition-colors hover:bg-accent/50 cursor-pointer">
-      <Link href={`/watch/${video.id}`}>
-        {/* Thumbnail */}
-        <div className="relative aspect-video bg-muted overflow-hidden">
-          <img
-            src={video.thumbnailUrl}
-            alt={video.title}
-            className="object-cover w-full h-full transition-transform group-hover:scale-105"
-          />
-          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-            <Play className="h-12 w-12 text-white" fill="white" />
-          </div>
-          <Badge className="absolute bottom-2 right-2 bg-black/70">
-            {video.duration}
-          </Badge>
-        </div>
-      </Link>
-      
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-2">
-          <Link href={`/watch/${video.id}`} className="min-w-0 flex-1">
-            <h3 className="font-medium truncate">{video.title}</h3>
-            <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Badge variant="secondary" className="text-xs">
-                  v{video.currentVersion}
-                </Badge>
-              </span>
-              <span className="flex items-center gap-1">
-                <MessageSquare className="h-3.5 w-3.5" />
-                {video.commentCount}
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3.5 w-3.5" />
-                {video.lastUpdated}
-              </span>
+    <>
+      <Card className="group overflow-hidden transition-colors hover:bg-accent/50 cursor-pointer">
+        <Link href={`/projects/${projectId}/videos/${video.id}`}>
+          {/* Thumbnail */}
+          <div className="relative aspect-video bg-muted overflow-hidden">
+            <img
+              src={video.thumbnailUrl}
+              alt={video.title}
+              className="object-cover w-full h-full transition-transform group-hover:scale-105"
+            />
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <Play className="h-12 w-12 text-white" fill="white" />
             </div>
-          </Link>
-          
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8 shrink-0"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem>Edit</DropdownMenuItem>
-              <DropdownMenuItem>Add Version</DropdownMenuItem>
-              <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </CardContent>
-    </Card>
+            <Badge className="absolute bottom-2 right-2 bg-black/70">{video.duration}</Badge>
+          </div>
+        </Link>
+
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-2">
+            <Link href={`/projects/${projectId}/videos/${video.id}`} className="min-w-0 flex-1">
+              <h3 className="font-medium truncate">{video.title}</h3>
+              <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Badge variant="secondary" className="text-xs">
+                    v{video.currentVersion}
+                  </Badge>
+                </span>
+                <span className="flex items-center gap-1">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {video.commentCount}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5" />
+                  {video.lastUpdated}
+                </span>
+              </div>
+            </Link>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setShowEditDialog(true)}>
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShowVersionDialog(true)}>
+                  Add Version
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive"
+                  onSelect={() => setShowDeleteDialog(true)}
+                >
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Video</DialogTitle>
+            <DialogDescription>Update the video title and description.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-2">
+              <Label>Title</Label>
+              <Input
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                disabled={isSaving}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description (optional)</Label>
+              <Textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={3}
+                disabled={isSaving}
+              />
+            </div>
+            {editError && (
+              <p className="text-sm text-destructive flex items-center gap-1">
+                <AlertCircle className="h-4 w-4" />
+                {editError}
+              </p>
+            )}
+            <Button onClick={handleEdit} disabled={!editTitle.trim() || isSaving} className="w-full">
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Version Dialog */}
+      <Dialog open={showVersionDialog} onOpenChange={setShowVersionDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add New Version</DialogTitle>
+            <DialogDescription>
+              Upload a new version of &quot;{video.title}&quot;. The new version will become active.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-2">
+              <Label>Video URL</Label>
+              <div className="relative">
+                <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="https://youtube.com/watch?v=..."
+                  value={versionUrl}
+                  onChange={(e) => handleVersionUrlChange(e.target.value)}
+                  className="pl-10"
+                  disabled={isCreatingVersion}
+                />
+              </div>
+              {versionUrlError && (
+                <p className="text-sm text-destructive flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" />
+                  {versionUrlError}
+                </p>
+              )}
+              {versionSource && (
+                <p className="text-sm text-green-600 flex items-center gap-1">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {versionSource.providerId.charAt(0).toUpperCase() +
+                    versionSource.providerId.slice(1)}{' '}
+                  video detected
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Version Label (optional)</Label>
+              <Input
+                placeholder="e.g. Final Cut, Review Round 2"
+                value={versionLabel}
+                onChange={(e) => setVersionLabel(e.target.value)}
+                disabled={isCreatingVersion}
+              />
+            </div>
+            <Button
+              onClick={handleCreateVersion}
+              disabled={!versionSource || isCreatingVersion}
+              className="w-full"
+            >
+              {isCreatingVersion && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Add Version {video.currentVersion + 1}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete &quot;{video.title}&quot;?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this video, all its versions, and all comments. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

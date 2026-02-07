@@ -24,6 +24,9 @@ declare namespace YT {
     getCurrentTime(): number;
     getDuration(): number;
     getPlayerState(): PlayerState;
+    setPlaybackRate(suggestedRate: number): void;
+    getPlaybackRate(): number;
+    getAvailablePlaybackRates(): number[];
     destroy(): void;
   }
 

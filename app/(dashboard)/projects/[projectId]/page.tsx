@@ -92,7 +92,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   // Check access
   const isOwner = session?.user?.id === project.ownerId;
   const isMember = project.members.length > 0;
-  const isPublicOrLink = project.visibility !== 'PRIVATE';
+  const isPublic = project.visibility === 'PUBLIC';
 
   // Check workspace membership
   let isWorkspaceMember = false;
@@ -116,7 +116,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
     }
   }
 
-  if (!isOwner && !isMember && !isPublicOrLink && !isWorkspaceMember) {
+  if (!isOwner && !isMember && !isPublic && !isWorkspaceMember) {
     redirect('/dashboard');
   }
 
