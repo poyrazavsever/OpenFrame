@@ -82,6 +82,8 @@ interface Comment {
   replies: {
     id: string;
     content: string | null;
+    voiceUrl: string | null;
+    voiceDuration: number | null;
     createdAt: string;
     author: { id: string; name: string | null; image: string | null } | null;
     guestName: string | null;
@@ -133,6 +135,19 @@ export default function VideoPage() {
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [voiceProgress, setVoiceProgress] = useState(0);
+  const [voiceCurrentTime, setVoiceCurrentTime] = useState(0);
+  const [voicePlaybackRate, setVoicePlaybackRate] = useState(1);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const voiceRafRef = useRef<number | null>(null);
+  const voiceKnownDurationRef = useRef<number>(0);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
 
@@ -140,6 +155,13 @@ export default function VideoPage() {
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [isSubmittingReply, setIsSubmittingReply] = useState(false);
+  const [isReplyRecording, setIsReplyRecording] = useState(false);
+  const [replyRecordingTime, setReplyRecordingTime] = useState(0);
+  const [replyAudioBlob, setReplyAudioBlob] = useState<Blob | null>(null);
+  const [isUploadingReplyAudio, setIsUploadingReplyAudio] = useState(false);
+  const replyMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const replyAudioChunksRef = useRef<Blob[]>([]);
+  const replyRecordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
@@ -336,8 +358,9 @@ export default function VideoPage() {
     }
   }, [isDragging, currentTime, handleSeekToTimestamp]);
 
-  const handleAddComment = useCallback(async () => {
-    if (!commentText.trim() || !activeVersion) return;
+  const handleAddComment = useCallback(async (voiceData?: { url: string; duration: number }) => {
+    if (!voiceData && !commentText.trim()) return;
+    if (!activeVersion) return;
     setIsSubmittingComment(true);
 
     try {
@@ -345,8 +368,9 @@ export default function VideoPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: commentText,
+          content: voiceData ? commentText.trim() || null : commentText,
           timestamp: selectedTimestamp ?? currentTime,
+          ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
         }),
       });
 
@@ -372,6 +396,192 @@ export default function VideoPage() {
       setIsSubmittingComment(false);
     }
   }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId]);
+
+  // Voice recording handlers
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm',
+      });
+
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+        stream.getTracks().forEach((track) => track.stop());
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+          recordingTimerRef.current = null;
+        }
+      };
+
+      mediaRecorder.start(100);
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 0.1);
+      }, 100);
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  }, []);
+
+  const cancelRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setAudioBlob(null);
+    setRecordingTime(0);
+  }, []);
+
+  const submitVoiceComment = useCallback(async () => {
+    if (!audioBlob || !activeVersion) return;
+    setIsUploadingAudio(true);
+
+    try {
+      // Upload audio to R2
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.webm');
+
+      const uploadRes = await fetch('/api/upload/audio', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error('Failed to upload audio');
+      }
+
+      const { url } = await uploadRes.json();
+
+      // Submit comment with voice URL
+      await handleAddComment({ url, duration: recordingTime });
+      setAudioBlob(null);
+      setRecordingTime(0);
+    } catch (err) {
+      console.error('Failed to submit voice comment:', err);
+    } finally {
+      setIsUploadingAudio(false);
+    }
+  }, [audioBlob, activeVersion, recordingTime, handleAddComment]);
+
+  // Voice playback
+  const stopVoiceTracking = useCallback(() => {
+    if (voiceRafRef.current) {
+      cancelAnimationFrame(voiceRafRef.current);
+      voiceRafRef.current = null;
+    }
+  }, []);
+
+  const startVoiceTracking = useCallback(() => {
+    stopVoiceTracking();
+    const tick = () => {
+      const audio = audioPlayerRef.current;
+      if (audio) {
+        const dur = isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : voiceKnownDurationRef.current;
+        if (dur > 0) {
+          setVoiceProgress((audio.currentTime / dur) * 100);
+          setVoiceCurrentTime(audio.currentTime);
+        }
+      }
+      voiceRafRef.current = requestAnimationFrame(tick);
+    };
+    voiceRafRef.current = requestAnimationFrame(tick);
+  }, [stopVoiceTracking]);
+
+  const playVoice = useCallback((commentId: string, voiceUrl: string, knownDuration?: number) => {
+    if (playingVoiceId === commentId) {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current = null;
+      }
+      stopVoiceTracking();
+      setPlayingVoiceId(null);
+      setVoiceProgress(0);
+      setVoiceCurrentTime(0);
+      return;
+    }
+
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+    }
+    stopVoiceTracking();
+
+    voiceKnownDurationRef.current = knownDuration || 0;
+    const audio = new Audio(voiceUrl);
+    audio.playbackRate = voicePlaybackRate;
+    audioPlayerRef.current = audio;
+    setPlayingVoiceId(commentId);
+    setVoiceProgress(0);
+    setVoiceCurrentTime(0);
+
+    audio.onplay = () => {
+      startVoiceTracking();
+    };
+
+    audio.onended = () => {
+      stopVoiceTracking();
+      setPlayingVoiceId(null);
+      setVoiceProgress(0);
+      setVoiceCurrentTime(0);
+      audioPlayerRef.current = null;
+    };
+
+    audio.onerror = () => {
+      stopVoiceTracking();
+      setPlayingVoiceId(null);
+      setVoiceProgress(0);
+      setVoiceCurrentTime(0);
+      audioPlayerRef.current = null;
+    };
+
+    audio.play();
+  }, [playingVoiceId, voicePlaybackRate, startVoiceTracking, stopVoiceTracking]);
+
+  const toggleVoiceSpeed = useCallback(() => {
+    setVoicePlaybackRate((prev) => {
+      const next = prev === 1 ? 2 : 1;
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.playbackRate = next;
+      }
+      return next;
+    });
+  }, []);
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current = null;
+      }
+      stopVoiceTracking();
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleResolveComment = useCallback(
     async (commentId: string, currentlyResolved: boolean) => {
@@ -408,17 +618,19 @@ export default function VideoPage() {
   );
 
   // Reply to a comment
-  const handleReplyComment = useCallback(async (parentId: string) => {
-    if (!replyText.trim() || !activeVersion) return;
+  const handleReplyComment = useCallback(async (parentId: string, voiceData?: { url: string; duration: number }) => {
+    if (!voiceData && !replyText.trim()) return;
+    if (!activeVersion) return;
     setIsSubmittingReply(true);
     try {
       const res = await fetch(`/api/versions/${activeVersion.id}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: replyText,
+          content: voiceData ? replyText.trim() || null : replyText,
           timestamp: comments.find((c) => c.id === parentId)?.timestamp ?? currentTime,
           parentId,
+          ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
         }),
       });
       if (res.ok) {
@@ -443,6 +655,8 @@ export default function VideoPage() {
         });
         setReplyText('');
         setReplyingTo(null);
+        setReplyAudioBlob(null);
+        setReplyRecordingTime(0);
       }
     } catch (err) {
       console.error('Failed to reply:', err);
@@ -450,6 +664,73 @@ export default function VideoPage() {
       setIsSubmittingReply(false);
     }
   }, [replyText, activeVersion, activeVersionId, comments, currentTime]);
+
+  // Voice recording for replies
+  const startReplyRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm',
+      });
+      replyAudioChunksRef.current = [];
+      replyMediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) replyAudioChunksRef.current.push(e.data);
+      };
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(replyAudioChunksRef.current, { type: 'audio/webm' });
+        setReplyAudioBlob(blob);
+        stream.getTracks().forEach((track) => track.stop());
+        if (replyRecordingTimerRef.current) {
+          clearInterval(replyRecordingTimerRef.current);
+          replyRecordingTimerRef.current = null;
+        }
+      };
+      mediaRecorder.start(100);
+      setIsReplyRecording(true);
+      setReplyRecordingTime(0);
+      replyRecordingTimerRef.current = setInterval(() => {
+        setReplyRecordingTime((prev) => prev + 0.1);
+      }, 100);
+    } catch (err) {
+      console.error('Failed to start reply recording:', err);
+    }
+  }, []);
+
+  const stopReplyRecording = useCallback(() => {
+    if (replyMediaRecorderRef.current && replyMediaRecorderRef.current.state !== 'inactive') {
+      replyMediaRecorderRef.current.stop();
+    }
+    setIsReplyRecording(false);
+  }, []);
+
+  const cancelReplyRecording = useCallback(() => {
+    if (replyMediaRecorderRef.current && replyMediaRecorderRef.current.state !== 'inactive') {
+      replyMediaRecorderRef.current.stop();
+    }
+    setIsReplyRecording(false);
+    setReplyAudioBlob(null);
+    setReplyRecordingTime(0);
+  }, []);
+
+  const submitVoiceReply = useCallback(async (parentId: string) => {
+    if (!replyAudioBlob || !activeVersion) return;
+    setIsUploadingReplyAudio(true);
+    try {
+      const formData = new FormData();
+      formData.append('audio', replyAudioBlob, 'recording.webm');
+      const uploadRes = await fetch('/api/upload/audio', { method: 'POST', body: formData });
+      if (!uploadRes.ok) throw new Error('Failed to upload audio');
+      const { url } = await uploadRes.json();
+      await handleReplyComment(parentId, { url, duration: replyRecordingTime });
+    } catch (err) {
+      console.error('Failed to submit voice reply:', err);
+    } finally {
+      setIsUploadingReplyAudio(false);
+    }
+  }, [replyAudioBlob, activeVersion, replyRecordingTime, handleReplyComment]);
 
   // Edit a comment
   const handleEditComment = useCallback(async (commentId: string) => {
@@ -1055,15 +1336,37 @@ export default function VideoPage() {
 
                       {comment.voiceUrl && (
                         <div className="flex items-center gap-2 p-2 bg-muted rounded mb-2">
-                          <Button size="icon" variant="ghost" className="h-8 w-8">
-                            <Play className="h-4 w-4" />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => playVoice(comment.id, comment.voiceUrl!, comment.voiceDuration || 0)}
+                          >
+                            {playingVoiceId === comment.id ? (
+                              <Pause className="h-4 w-4" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
                           </Button>
-                          <div className="flex-1 h-1 bg-primary/30 rounded">
-                            <div className="w-0 h-full bg-primary rounded" />
+                          <div className="flex-1 h-2 bg-primary/20 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary rounded-full"
+                              style={{ width: playingVoiceId === comment.id ? `${voiceProgress}%` : '0%' }}
+                            />
                           </div>
-                          <span className="text-xs text-muted-foreground">
-                            {formatTime(comment.voiceDuration || 0)}
+                          <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                            {playingVoiceId === comment.id
+                              ? `${formatTime(voiceCurrentTime)} / ${formatTime(comment.voiceDuration || 0)}`
+                              : formatTime(comment.voiceDuration || 0)}
                           </span>
+                          {playingVoiceId === comment.id && (
+                            <button
+                              onClick={toggleVoiceSpeed}
+                              className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                            >
+                              {voicePlaybackRate}x
+                            </button>
+                          )}
                         </div>
                       )}
 
@@ -1158,7 +1461,42 @@ export default function VideoPage() {
                                     </div>
                                   </div>
                                 ) : (
-                                  <p className="text-sm">{reply.content}</p>
+                                  reply.content && <p className="text-sm">{reply.content}</p>
+                                )}
+                                {reply.voiceUrl && (
+                                  <div className="flex items-center gap-2 p-1.5 bg-muted rounded mt-1">
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-6 w-6 shrink-0"
+                                      onClick={() => playVoice(reply.id, reply.voiceUrl!, reply.voiceDuration || 0)}
+                                    >
+                                      {playingVoiceId === reply.id ? (
+                                        <Pause className="h-3 w-3" />
+                                      ) : (
+                                        <Play className="h-3 w-3" />
+                                      )}
+                                    </Button>
+                                    <div className="flex-1 h-1.5 bg-primary/20 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-primary rounded-full"
+                                        style={{ width: playingVoiceId === reply.id ? `${voiceProgress}%` : '0%' }}
+                                      />
+                                    </div>
+                                    <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                                      {playingVoiceId === reply.id
+                                        ? `${formatTime(voiceCurrentTime)} / ${formatTime(reply.voiceDuration || 0)}`
+                                        : formatTime(reply.voiceDuration || 0)}
+                                    </span>
+                                    {playingVoiceId === reply.id && (
+                                      <button
+                                        onClick={toggleVoiceSpeed}
+                                        className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                                      >
+                                        {voicePlaybackRate}x
+                                      </button>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             );
@@ -1169,41 +1507,126 @@ export default function VideoPage() {
                       {/* Inline reply form */}
                       {isReplying && (
                         <div className="mt-3 pl-3 border-l-2">
-                          <Textarea
-                            value={replyText}
-                            onChange={(e) => setReplyText(e.target.value)}
-                            placeholder="Write a reply..."
-                            rows={2}
-                            className="resize-none text-sm mb-1"
-                            autoFocus
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                                handleReplyComment(comment.id);
-                              }
-                              if (e.key === 'Escape') {
-                                setReplyingTo(null);
-                                setReplyText('');
-                              }
-                            }}
-                          />
-                          <div className="flex gap-1">
-                            <Button
-                              size="sm"
-                              onClick={() => handleReplyComment(comment.id)}
-                              disabled={!replyText.trim() || isSubmittingReply}
-                              className="h-7 text-xs"
-                            >
-                              {isSubmittingReply ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reply'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => { setReplyingTo(null); setReplyText(''); }}
-                              className="h-7 text-xs"
-                            >
-                              Cancel
-                            </Button>
-                          </div>
+                          {isReplyRecording ? (
+                            <div className="flex items-center gap-2 p-2 bg-destructive/10 border border-destructive/30 rounded-lg mb-1">
+                              <div className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
+                              <span className="text-xs font-medium text-destructive">
+                                {formatTime(replyRecordingTime)}
+                              </span>
+                              <div className="flex-1" />
+                              <Button size="sm" variant="destructive" onClick={stopReplyRecording} className="h-6 text-xs">
+                                Stop
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={cancelReplyRecording} className="h-6 text-xs">
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ) : replyAudioBlob ? (
+                            <div className="space-y-1 mb-1">
+                              <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6"
+                                  onClick={() => {
+                                    const url = URL.createObjectURL(replyAudioBlob);
+                                    playVoice('reply-preview', url, replyRecordingTime);
+                                  }}
+                                >
+                                  {playingVoiceId === 'reply-preview' ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                                </Button>
+                                <div className="flex-1 h-1.5 bg-primary/20 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-primary rounded-full"
+                                    style={{ width: playingVoiceId === 'reply-preview' ? `${voiceProgress}%` : '0%' }}
+                                  />
+                                </div>
+                                <span className="text-xs text-muted-foreground tabular-nums">
+                                  {playingVoiceId === 'reply-preview'
+                                    ? `${formatTime(voiceCurrentTime)} / ${formatTime(replyRecordingTime)}`
+                                    : formatTime(replyRecordingTime)}
+                                </span>
+                                {playingVoiceId === 'reply-preview' && (
+                                  <button
+                                    onClick={toggleVoiceSpeed}
+                                    className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                                  >
+                                    {voicePlaybackRate}x
+                                  </button>
+                                )}
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelReplyRecording}>
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                              <Textarea
+                                value={replyText}
+                                onChange={(e) => setReplyText(e.target.value)}
+                                placeholder="Add a note (optional)..."
+                                rows={1}
+                                className="resize-none text-sm"
+                              />
+                              <div className="flex gap-1">
+                                <Button
+                                  size="sm"
+                                  onClick={() => submitVoiceReply(comment.id)}
+                                  disabled={isUploadingReplyAudio}
+                                  className="h-7 text-xs"
+                                >
+                                  {isUploadingReplyAudio ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Send Voice Reply'}
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={cancelReplyRecording} className="h-7 text-xs">Cancel</Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex gap-1">
+                                <Textarea
+                                  value={replyText}
+                                  onChange={(e) => setReplyText(e.target.value)}
+                                  placeholder="Write a reply..."
+                                  rows={2}
+                                  className="resize-none text-sm flex-1"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                      handleReplyComment(comment.id);
+                                    }
+                                    if (e.key === 'Escape') {
+                                      setReplyingTo(null);
+                                      setReplyText('');
+                                    }
+                                  }}
+                                />
+                                <Button
+                                  size="icon"
+                                  variant="outline"
+                                  onClick={startReplyRecording}
+                                  title="Record voice reply"
+                                  className="h-8 w-8 shrink-0 self-end"
+                                >
+                                  <Mic className="h-3 w-3" />
+                                </Button>
+                              </div>
+                              <div className="flex gap-1 mt-1">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleReplyComment(comment.id)}
+                                  disabled={!replyText.trim() || isSubmittingReply}
+                                  className="h-7 text-xs"
+                                >
+                                  {isSubmittingReply ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reply'}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => { setReplyingTo(null); setReplyText(''); }}
+                                  className="h-7 text-xs"
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
 
@@ -1227,52 +1650,152 @@ export default function VideoPage() {
           <div className="shrink-0 p-4 border-t bg-background">
             <div className="flex items-center gap-2 mb-2">
               <Button
-                variant="outline"
+                variant={selectedTimestamp !== null ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setSelectedTimestamp(currentTime)}
-                className={cn(selectedTimestamp !== null && 'border-primary')}
+                onClick={() => {
+                  if (selectedTimestamp !== null) {
+                    setSelectedTimestamp(null);
+                  } else {
+                    setSelectedTimestamp(currentTime);
+                  }
+                }}
               >
                 <Clock className="h-4 w-4 mr-1" />
                 {selectedTimestamp !== null ? formatTime(selectedTimestamp) : formatTime(currentTime)}
+                {selectedTimestamp !== null && <X className="h-3 w-3 ml-1" />}
               </Button>
-              <span className="text-xs text-muted-foreground">Pin to this time</span>
+              <span className="text-xs text-muted-foreground">
+                {selectedTimestamp !== null ? 'Pinned — click to unpin' : 'Pin to this time'}
+              </span>
             </div>
 
-            <div className="flex gap-2">
-              <Textarea
-                placeholder="Add a comment..."
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                rows={2}
-                className="resize-none text-sm"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                    handleAddComment();
-                  }
-                }}
-              />
-              <div className="flex flex-col gap-1">
-                <Button
-                  size="icon"
-                  onClick={handleAddComment}
-                  disabled={!commentText.trim() || isSubmittingComment}
-                >
-                  {isSubmittingComment ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
+            {/* Recording state UI */}
+            {isRecording ? (
+              <div className="flex items-center gap-3 p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+                <div className="h-3 w-3 rounded-full bg-destructive animate-pulse" />
+                <span className="text-sm font-medium text-destructive">
+                  Recording {formatTime(recordingTime)}
+                </span>
+                <div className="flex-1" />
+                <Button size="sm" variant="destructive" onClick={stopRecording}>
+                  Stop
                 </Button>
-                <Button
-                  size="icon"
-                  variant={isRecording ? 'destructive' : 'outline'}
-                  onClick={() => setIsRecording(!isRecording)}
-                >
-                  <Mic className={cn('h-4 w-4', isRecording && 'animate-pulse')} />
+                <Button size="sm" variant="ghost" onClick={cancelRecording}>
+                  <X className="h-4 w-4" />
                 </Button>
               </div>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Cmd+Enter to submit</p>
+            ) : audioBlob ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    onClick={() => {
+                      const url = URL.createObjectURL(audioBlob);
+                      playVoice('preview', url, recordingTime);
+                    }}
+                  >
+                    {playingVoiceId === 'preview' ? (
+                      <Pause className="h-4 w-4" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <div className="flex-1 h-2 bg-primary/20 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full"
+                      style={{ width: playingVoiceId === 'preview' ? `${voiceProgress}%` : '0%' }}
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {playingVoiceId === 'preview'
+                      ? `${formatTime(voiceCurrentTime)} / ${formatTime(recordingTime)}`
+                      : formatTime(recordingTime)}
+                  </span>
+                  {playingVoiceId === 'preview' && (
+                    <button
+                      onClick={toggleVoiceSpeed}
+                      className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                    >
+                      {voicePlaybackRate}x
+                    </button>
+                  )}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    onClick={cancelRecording}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                <Textarea
+                  placeholder="Add a note to your voice comment (optional)..."
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  rows={1}
+                  className="resize-none text-sm"
+                />
+                <Button
+                  size="sm"
+                  onClick={submitVoiceComment}
+                  disabled={isUploadingAudio}
+                  className="w-full"
+                >
+                  {isUploadingAudio ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      Send Voice Comment
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <Textarea
+                    placeholder="Add a comment..."
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    rows={2}
+                    className="resize-none text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                        handleAddComment();
+                      }
+                    }}
+                  />
+                  <div className="flex flex-col gap-1">
+                    <Button
+                      size="icon"
+                      onClick={() => handleAddComment()}
+                      disabled={!commentText.trim() || isSubmittingComment}
+                    >
+                      {isSubmittingComment ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      onClick={startRecording}
+                      title="Record voice comment"
+                    >
+                      <Mic className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Cmd+Enter to submit</p>
+              </>
+            )}
           </div>
         </div>
       </div>

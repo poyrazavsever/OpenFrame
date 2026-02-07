@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { rateLimit } from '@/lib/rate-limit';
 
 type RouteParams = { params: Promise<{ commentId: string }> };
 
@@ -65,6 +68,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // PATCH /api/comments/[commentId]
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'mutate');
+        if (limited) return limited;
+
         const session = await auth();
         const { commentId } = await params;
 
@@ -152,6 +158,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 // DELETE /api/comments/[commentId]
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'mutate');
+        if (limited) return limited;
+
         const session = await auth();
         const { commentId } = await params;
 
@@ -162,6 +171,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const comment = await db.comment.findUnique({
             where: { id: commentId },
             include: {
+                replies: { select: { voiceUrl: true } },
                 version: {
                     include: {
                         video: { include: { project: true } },
@@ -184,7 +194,34 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             );
         }
 
+        // Collect all voice URLs to delete from R2 (comment + its replies)
+        const voiceUrls: string[] = [];
+        if (comment.voiceUrl) voiceUrls.push(comment.voiceUrl);
+        for (const reply of comment.replies) {
+            if (reply.voiceUrl) voiceUrls.push(reply.voiceUrl);
+        }
+
         await db.comment.delete({ where: { id: commentId } });
+
+        // Clean up audio files from R2 (best-effort, don't block on failure)
+        const AUDIO_PREFIX = '/api/upload/audio/';
+        for (const url of voiceUrls) {
+            try {
+                // Extract filename using string parsing (safe against ReDoS)
+                const idx = url.indexOf(AUDIO_PREFIX);
+                const filename = idx !== -1 ? url.slice(idx + AUDIO_PREFIX.length) : null;
+                if (filename) {
+                    await r2Client.send(
+                        new DeleteObjectCommand({
+                            Bucket: R2_BUCKET_NAME,
+                            Key: `voice/${filename}`,
+                        })
+                    );
+                }
+            } catch (err) {
+                console.error('Failed to delete audio from R2:', err);
+            }
+        }
 
         return NextResponse.json({ success: true, message: 'Comment deleted' });
     } catch (error) {

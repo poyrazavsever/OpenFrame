@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { WorkspaceMemberRole } from '@prisma/client';
+import { rateLimit } from '@/lib/rate-limit';
 
 type RouteParams = { params: Promise<{ workspaceId: string; memberId: string }> };
 
 // PATCH /api/workspaces/[workspaceId]/members/[memberId] - Update member role
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'manage-member');
+        if (limited) return limited;
+
         const session = await auth();
         const { workspaceId, memberId } = await params;
 
@@ -64,6 +68,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 // DELETE /api/workspaces/[workspaceId]/members/[memberId] - Remove member
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'manage-member');
+        if (limited) return limited;
+
         const session = await auth();
         const { workspaceId, memberId } = await params;
 

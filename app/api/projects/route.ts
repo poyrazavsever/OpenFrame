@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectVisibility } from '@prisma/client';
+import { rateLimit } from '@/lib/rate-limit';
 
 // GET /api/projects - List all projects for the authenticated user
 export async function GET(request: NextRequest) {
@@ -75,6 +76,9 @@ export async function GET(request: NextRequest) {
 // POST /api/projects - Create a new project
 export async function POST(request: NextRequest) {
     try {
+        const limited = await rateLimit(request, 'create-project');
+        if (limited) return limited;
+
         const session = await auth();
 
         if (!session?.user?.id) {

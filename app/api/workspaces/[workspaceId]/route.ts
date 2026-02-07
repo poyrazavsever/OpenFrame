@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { rateLimit } from '@/lib/rate-limit';
+import { cleanupWorkspaceVoiceFiles } from '@/lib/r2-cleanup';
 
 type RouteParams = { params: Promise<{ workspaceId: string }> };
 
@@ -81,6 +83,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // PATCH /api/workspaces/[workspaceId] - Update a workspace
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'mutate');
+        if (limited) return limited;
+
         const session = await auth();
         const { workspaceId } = await params;
 
@@ -122,6 +127,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 // DELETE /api/workspaces/[workspaceId] - Delete a workspace
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'mutate');
+        if (limited) return limited;
+
         const session = await auth();
         const { workspaceId } = await params;
 
@@ -141,6 +149,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
                 { status: 403 }
             );
         }
+
+        // Clean up voice files from R2 before cascade delete removes comment rows
+        await cleanupWorkspaceVoiceFiles(workspaceId);
 
         await db.workspace.delete({ where: { id: workspaceId } });
 

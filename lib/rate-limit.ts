@@ -1,4 +1,5 @@
 import { db } from '@/lib/db';
+import { NextResponse } from 'next/server';
 
 interface RateLimitConfig {
     windowMs: number;      // Time window in milliseconds
@@ -11,11 +12,29 @@ interface RateLimitResult {
     resetAt: Date;
 }
 
-// Default configs for different actions
+// Industry-standard rate limit defaults per action
 export const RATE_LIMIT_CONFIGS: Record<string, RateLimitConfig> = {
-    register: { windowMs: 60 * 60 * 1000, maxRequests: 5 },      // 5 per hour
-    login: { windowMs: 15 * 60 * 1000, maxRequests: 10 },        // 10 per 15 min
-    api: { windowMs: 60 * 1000, maxRequests: 100 },              // 100 per minute
+    // Auth — strict to prevent brute force / credential stuffing
+    register:       { windowMs: 60 * 60 * 1000, maxRequests: 5 },       // 5 per hour
+    login:          { windowMs: 15 * 60 * 1000, maxRequests: 10 },      // 10 per 15 min
+
+    // Content creation — moderate limits
+    comment:        { windowMs: 60 * 1000, maxRequests: 15 },           // 15 per minute
+    'voice-upload': { windowMs: 60 * 1000, maxRequests: 10 },           // 10 per minute
+    'create-project':   { windowMs: 60 * 60 * 1000, maxRequests: 20 },  // 20 per hour
+    'create-video':     { windowMs: 60 * 1000, maxRequests: 10 },       // 10 per minute
+    'create-version':   { windowMs: 60 * 1000, maxRequests: 10 },       // 10 per minute
+    'create-workspace': { windowMs: 60 * 60 * 1000, maxRequests: 10 },  // 10 per hour
+
+    // Member management
+    'invite-member':  { windowMs: 60 * 60 * 1000, maxRequests: 30 },    // 30 per hour
+    'manage-member':  { windowMs: 60 * 1000, maxRequests: 20 },         // 20 per minute
+
+    // Mutations (update/delete) — moderate
+    'mutate':         { windowMs: 60 * 1000, maxRequests: 30 },         // 30 per minute
+
+    // General reads — generous
+    api:              { windowMs: 60 * 1000, maxRequests: 100 },        // 100 per minute
 };
 
 /**
@@ -29,6 +48,13 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
     const { windowMs, maxRequests } = config || RATE_LIMIT_CONFIGS[action] || RATE_LIMIT_CONFIGS.api;
     const windowSeconds = Math.floor(windowMs / 1000);
+
+    // Validate inputs before passing to query — defence in depth.
+    // Prisma's tagged template $queryRaw already parameterizes these values,
+    // but we enforce sane bounds to reject obviously malicious input.
+    if (key.length > 256 || action.length > 64) {
+        return { allowed: true, remaining: maxRequests, resetAt: new Date(Date.now() + windowMs) };
+    }
 
     try {
         // Atomic upsert with window check
@@ -72,18 +98,39 @@ export async function checkRateLimit(
     }
 }
 
+// Basic IP format validation — IPv4 or IPv6 (loose check, rejects obvious garbage)
+const IP_PATTERN = /^[\da-fA-F.:]+$/;
+
+function isPlausibleIp(value: string): boolean {
+    return value.length <= 45 && IP_PATTERN.test(value);
+}
+
 /**
- * Get client IP from request headers
- * Handles common proxy headers
+ * Get client IP from request headers.
+ *
+ * Header priority:
+ *  1. cf-connecting-ip  — set by Cloudflare (trusted proxy); cannot be spoofed by clients
+ *  2. x-forwarded-for   — first entry, trusted only behind a proxy that overwrites it
+ *  3. x-real-ip         — set by some reverse proxies (Nginx)
+ *  4. 127.0.0.1         — local development fallback
+ *
+ * Deployed behind Cloudflare, so cf-connecting-ip is the canonical source.
  */
 export function getClientIp(request: Request): string {
+    // Cloudflare always sets this to the true client IP
+    const cfIp = request.headers.get('cf-connecting-ip');
+    if (cfIp && isPlausibleIp(cfIp)) {
+        return cfIp;
+    }
+
     const forwardedFor = request.headers.get('x-forwarded-for');
     if (forwardedFor) {
-        return forwardedFor.split(',')[0].trim();
+        const first = forwardedFor.split(',')[0].trim();
+        if (isPlausibleIp(first)) return first;
     }
 
     const realIp = request.headers.get('x-real-ip');
-    if (realIp) {
+    if (realIp && isPlausibleIp(realIp)) {
         return realIp;
     }
 
@@ -111,4 +158,32 @@ export async function cleanupRateLimits(): Promise<void> {
     } catch (error) {
         console.error('Rate limit cleanup failed:', error);
     }
+}
+
+/**
+ * One-call rate limit check that returns a 429 NextResponse if blocked, or null if allowed.
+ * Use at the top of any API handler:
+ *   const limited = await rateLimit(request, 'comment');
+ *   if (limited) return limited;
+ */
+export async function rateLimit(
+    request: Request,
+    action: string,
+    config?: RateLimitConfig
+): Promise<NextResponse | null> {
+    const ip = getClientIp(request);
+    const cfg = config || RATE_LIMIT_CONFIGS[action] || RATE_LIMIT_CONFIGS.api;
+    const result = await checkRateLimit(ip, action, cfg);
+
+    if (!result.allowed) {
+        return NextResponse.json(
+            { error: 'Too many requests. Please try again later.' },
+            {
+                status: 429,
+                headers: rateLimitHeaders(result, cfg.maxRequests),
+            }
+        );
+    }
+
+    return null;
 }

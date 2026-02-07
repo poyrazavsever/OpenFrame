@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
 import { validateUrl, validateOptionalUrl } from '@/lib/validation';
+import { rateLimit } from '@/lib/rate-limit';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
@@ -57,6 +58,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // POST /api/projects/[projectId]/videos - Add a new video to the project
 export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'create-video');
+        if (limited) return limited;
+
         const session = await auth();
         const { projectId } = await params;
 

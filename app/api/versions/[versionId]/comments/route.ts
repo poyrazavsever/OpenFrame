@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { validateOptionalUrl } from '@/lib/validation';
+import { rateLimit } from '@/lib/rate-limit';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
 
@@ -74,6 +75,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // POST /api/versions/[versionId]/comments
 export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'comment');
+        if (limited) return limited;
+
         const session = await auth();
         const { versionId } = await params;
 
@@ -149,10 +153,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             );
         }
 
-        // Validate voice URL uses safe scheme
-        const voiceUrlError = validateOptionalUrl(voiceUrl, 'Voice URL');
-        if (voiceUrlError) {
-            return NextResponse.json({ error: voiceUrlError }, { status: 400 });
+        // Validate voice URL uses safe scheme (allow internal /api/ paths)
+        if (voiceUrl && !voiceUrl.startsWith('/api/')) {
+            const voiceUrlError = validateOptionalUrl(voiceUrl, 'Voice URL');
+            if (voiceUrlError) {
+                return NextResponse.json({ error: voiceUrlError }, { status: 400 });
+            }
         }
 
         const comment = await db.comment.create({

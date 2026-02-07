@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { rateLimit } from '@/lib/rate-limit';
 
 // GET /api/workspaces - List all workspaces for the authenticated user
 export async function GET() {
@@ -39,6 +40,9 @@ export async function GET() {
 // POST /api/workspaces - Create a new workspace
 export async function POST(request: NextRequest) {
     try {
+        const limited = await rateLimit(request, 'create-workspace');
+        if (limited) return limited;
+
         const session = await auth();
 
         if (!session?.user?.id) {
