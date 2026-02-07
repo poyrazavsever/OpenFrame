@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import {
   ArrowLeft,
   Play,
@@ -205,15 +206,19 @@ export default function VideoPage() {
       try {
         const res = await fetch(`/api/projects/${projectId}/videos/${videoId}`);
         if (!res.ok) {
-          setError('Failed to load video');
+          const errorText = await res.text();
+          console.error('Failed to load video:', res.status, errorText);
+          setError(`Failed to load video: ${res.status} ${errorText}`);
           setLoading(false);
           return;
         }
-        const data = await res.json();
+        const response = await res.json();
+        const data = response.data;
         setVideo(data);
-        const active = data.versions.find((v: Version) => v.isActive) || data.versions[0];
+        const active = data.versions?.find((v: Version) => v.isActive) || data.versions?.[0];
         if (active) setActiveVersionId(active.id);
-      } catch {
+      } catch (err) {
+        console.error('Error fetching video:', err);
         setError('Failed to load video');
       } finally {
         setLoading(false);
@@ -222,7 +227,9 @@ export default function VideoPage() {
     fetchVideo();
   }, [projectId, videoId]);
 
-  const activeVersion = video?.versions.find((v) => v.id === activeVersionId);
+  const activeVersion = video?.versions?.find((v) => v.id === activeVersionId) || 
+    video?.versions?.find((v) => v.isActive) || 
+    video?.versions?.[0];
   const comments = activeVersion?.comments || [];
   const filteredComments = comments.filter((c) => showResolved || !c.isResolved);
   const duration = videoDuration || activeVersion?.duration || 0;
@@ -524,6 +531,41 @@ export default function VideoPage() {
   const handleAddComment = useCallback(async (voiceData?: { url: string; duration: number }) => {
     if (!voiceData && !commentText.trim()) return;
     if (!activeVersion) return;
+
+    const tempId = `temp-${Date.now()}`;
+    const optimisticComment: Comment = {
+      id: tempId,
+      content: voiceData ? commentText.trim() || null : commentText,
+      timestamp: selectedTimestamp ?? currentTime,
+      voiceUrl: voiceData?.url ?? null,
+      voiceDuration: voiceData?.duration ?? null,
+      isResolved: false,
+      createdAt: new Date().toISOString(),
+      author: isGuest ? null : { id: 'current-user', name: null, image: null },
+      guestName: isGuest ? guestName : null,
+      tag: availableTags.find(t => t.id === selectedTagId) || null,
+      replies: [],
+    };
+
+    // Optimistically add comment
+    setVideo((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        versions: prev.versions.map((v) =>
+          v.id === activeVersionId
+            ? { ...v, comments: [...v.comments, optimisticComment] }
+            : v
+        ),
+      };
+    });
+
+    // Clear input immediately for better UX
+    setCommentText('');
+    setSelectedTimestamp(null);
+    setSelectedTagId(availableTags.length > 0 ? availableTags[0].id : null);
+    setAudioBlob(null);
+
     setIsSubmittingComment(true);
 
     try {
@@ -541,27 +583,51 @@ export default function VideoPage() {
 
       if (res.ok) {
         const newComment = await res.json();
+        // Replace temp comment with real one
         setVideo((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
-                ? { ...v, comments: [...v.comments, { ...newComment, replies: [] }] }
+                ? { ...v, comments: v.comments.map(c => c.id === tempId ? { ...newComment, replies: [] } : c) }
                 : v
             ),
           };
         });
-        setCommentText('');
-        setSelectedTimestamp(null);
-        setSelectedTagId(null);
+      } else {
+        // Remove optimistic comment on failure
+        setVideo((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            versions: prev.versions.map((v) =>
+              v.id === activeVersionId
+                ? { ...v, comments: v.comments.filter(c => c.id !== tempId) }
+                : v
+            ),
+          };
+        });
+        toast.error('Failed to add comment');
       }
     } catch (err) {
-      console.error('Failed to add comment:', err);
+      // Remove optimistic comment on error
+      setVideo((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          versions: prev.versions.map((v) =>
+            v.id === activeVersionId
+              ? { ...v, comments: v.comments.filter(c => c.id !== tempId) }
+              : v
+          ),
+        };
+      });
+      toast.error('Failed to add comment');
     } finally {
       setIsSubmittingComment(false);
     }
-  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, selectedTagId]);
+  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, selectedTagId, availableTags]);
 
   // Voice recording handlers
   const startRecording = useCallback(async () => {
@@ -751,6 +817,24 @@ export default function VideoPage() {
 
   const handleResolveComment = useCallback(
     async (commentId: string, currentlyResolved: boolean) => {
+      // Optimistically toggle
+      setVideo((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          versions: prev.versions.map((v) =>
+            v.id === activeVersionId
+              ? {
+                  ...v,
+                  comments: v.comments.map((c) =>
+                    c.id === commentId ? { ...c, isResolved: !c.isResolved } : c
+                  ),
+                }
+              : v
+          ),
+        };
+      });
+
       try {
         const res = await fetch(`/api/comments/${commentId}`, {
           method: 'PATCH',
@@ -758,7 +842,8 @@ export default function VideoPage() {
           body: JSON.stringify({ isResolved: !currentlyResolved }),
         });
 
-        if (res.ok) {
+        if (!res.ok) {
+          // Rollback on failure
           setVideo((prev) => {
             if (!prev) return prev;
             return {
@@ -766,18 +851,36 @@ export default function VideoPage() {
               versions: prev.versions.map((v) =>
                 v.id === activeVersionId
                   ? {
-                    ...v,
-                    comments: v.comments.map((c) =>
-                      c.id === commentId ? { ...c, isResolved: !c.isResolved } : c
-                    ),
-                  }
+                      ...v,
+                      comments: v.comments.map((c) =>
+                        c.id === commentId ? { ...c, isResolved: currentlyResolved } : c
+                      ),
+                    }
                   : v
               ),
             };
           });
+          toast.error('Failed to update comment');
         }
       } catch (err) {
-        console.error('Failed to resolve comment:', err);
+        // Rollback on error
+        setVideo((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            versions: prev.versions.map((v) =>
+              v.id === activeVersionId
+                ? {
+                    ...v,
+                    comments: v.comments.map((c) =>
+                      c.id === commentId ? { ...c, isResolved: currentlyResolved } : c
+                    ),
+                  }
+                : v
+            ),
+          };
+        });
+        toast.error('Failed to update comment');
       }
     },
     [activeVersionId]
@@ -787,21 +890,64 @@ export default function VideoPage() {
   const handleReplyComment = useCallback(async (parentId: string, voiceData?: { url: string; duration: number }) => {
     if (!voiceData && !replyText.trim()) return;
     if (!activeVersion) return;
+
+    const tempId = `temp-reply-${Date.now()}`;
+    const parentComment = comments.find((c) => c.id === parentId);
+    const optimisticReply = {
+      id: tempId,
+      content: voiceData ? replyText.trim() || null : replyText,
+      voiceUrl: voiceData?.url ?? null,
+      voiceDuration: voiceData?.duration ?? null,
+      createdAt: new Date().toISOString(),
+      author: isGuest ? null : { id: 'current-user', name: null, image: null },
+      guestName: isGuest ? guestName : null,
+      tag: null,
+    };
+
+    // Optimistically add reply
+    setVideo((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        versions: prev.versions.map((v) =>
+          v.id === activeVersionId
+            ? {
+                ...v,
+                comments: v.comments.map((c) =>
+                  c.id === parentId
+                    ? { ...c, replies: [...c.replies, optimisticReply] }
+                    : c
+                ),
+              }
+            : v
+        ),
+      };
+    });
+
+    // Clear input immediately
+    setReplyText('');
+    setReplyingTo(null);
+    setReplyAudioBlob(null);
+    setReplyRecordingTime(0);
+
     setIsSubmittingReply(true);
+
     try {
       const res = await fetch(`/api/versions/${activeVersion.id}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: voiceData ? replyText.trim() || null : replyText,
-          timestamp: comments.find((c) => c.id === parentId)?.timestamp ?? currentTime,
+          timestamp: parentComment?.timestamp ?? currentTime,
           parentId,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
           ...(isGuest && guestName && { guestName }),
         }),
       });
+
       if (res.ok) {
         const newReply = await res.json();
+        // Replace temp reply with real one
         setVideo((prev) => {
           if (!prev) return prev;
           return {
@@ -809,28 +955,64 @@ export default function VideoPage() {
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
                 ? {
-                  ...v,
-                  comments: v.comments.map((c) =>
-                    c.id === parentId
-                      ? { ...c, replies: [...c.replies, newReply] }
-                      : c
-                  ),
-                }
+                    ...v,
+                    comments: v.comments.map((c) =>
+                      c.id === parentId
+                        ? { ...c, replies: c.replies.map(r => r.id === tempId ? newReply : r) }
+                        : c
+                    ),
+                  }
                 : v
             ),
           };
         });
-        setReplyText('');
-        setReplyingTo(null);
-        setReplyAudioBlob(null);
-        setReplyRecordingTime(0);
+      } else {
+        // Remove optimistic reply on failure
+        setVideo((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            versions: prev.versions.map((v) =>
+              v.id === activeVersionId
+                ? {
+                    ...v,
+                    comments: v.comments.map((c) =>
+                      c.id === parentId
+                        ? { ...c, replies: c.replies.filter(r => r.id !== tempId) }
+                        : c
+                    ),
+                  }
+                : v
+            ),
+          };
+        });
+        toast.error('Failed to add reply');
       }
     } catch (err) {
-      console.error('Failed to reply:', err);
+      // Remove optimistic reply on error
+      setVideo((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          versions: prev.versions.map((v) =>
+            v.id === activeVersionId
+              ? {
+                  ...v,
+                  comments: v.comments.map((c) =>
+                    c.id === parentId
+                      ? { ...c, replies: c.replies.filter(r => r.id !== tempId) }
+                      : c
+                  ),
+                }
+              : v
+          ),
+        };
+      });
+      toast.error('Failed to add reply');
     } finally {
       setIsSubmittingReply(false);
     }
-  }, [replyText, activeVersion, activeVersionId, comments, currentTime]);
+  }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, guestName]);
 
   // Voice recording for replies
   const startReplyRecording = useCallback(async () => {
@@ -1056,7 +1238,16 @@ export default function VideoPage() {
     if (version.providerId === 'vimeo') {
       return `https://player.vimeo.com/video/${version.videoId}`;
     }
-    return version.originalUrl;
+    // Security: Only allow http/https URLs to prevent XSS via javascript: URIs
+    try {
+      const url = new URL(version.originalUrl);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return '';
+      }
+      return version.originalUrl;
+    } catch {
+      return '';
+    }
   };
 
   if (loading) {

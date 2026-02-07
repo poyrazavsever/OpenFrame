@@ -2,13 +2,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Film } from "lucide-react";
 
-interface VideoNotFoundProps {
-  params: Promise<{ projectId: string; videoId: string }>;
-}
-
-export default async function VideoNotFound({ params }: VideoNotFoundProps) {
-  const { projectId } = await params;
-
+export default function VideoNotFound() {
   return (
     <div className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-4">
       <div className="flex flex-col items-center gap-2 text-center">
@@ -19,9 +13,6 @@ export default async function VideoNotFound({ params }: VideoNotFoundProps) {
         </p>
       </div>
       <div className="flex gap-2">
-        <Button asChild variant="default">
-          <Link href={`/projects/${projectId}`}>Back to project</Link>
-        </Button>
         <Button asChild variant="outline">
           <Link href="/dashboard">Go to dashboard</Link>
         </Button>

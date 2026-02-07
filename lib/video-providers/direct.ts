@@ -5,19 +5,33 @@ const DIRECT_VIDEO_PATTERNS = [
   /\.(mp4|webm|ogg|mov)(\?.*)?$/i,
 ];
 
+// Security: Validate URL protocol to prevent XSS
+function isValidVideoUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    // Only allow http and https protocols
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    return DIRECT_VIDEO_PATTERNS.some(pattern => pattern.test(url));
+  } catch {
+    return false;
+  }
+}
+
 export const directProvider: VideoProvider = {
   id: 'direct',
   name: 'Direct Upload',
   icon: 'Upload',
 
   canHandle(url: string): boolean {
-    // Check for common video extensions or our own domain
-    return DIRECT_VIDEO_PATTERNS.some(pattern => pattern.test(url));
+    // Check for common video extensions and valid protocol
+    return isValidVideoUrl(url);
   },
 
   extractVideoId(url: string): string | null {
     // For direct uploads, the "videoId" is the full URL
-    // In production, this would be a storage key/path
+    // Security: Validate URL before returning
     if (this.canHandle(url)) {
       return url;
     }
