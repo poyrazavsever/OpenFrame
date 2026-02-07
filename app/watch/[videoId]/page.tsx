@@ -25,6 +25,7 @@ import {
   Trash2,
   X,
   ArrowUpRight,
+  User,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -83,9 +84,11 @@ interface VideoData {
   project: {
     name: string;
     ownerId: string;
-    members: { role: string }[];
+    visibility: string;
   };
   versions: (Version & { comments: Comment[] })[];
+  isAuthenticated: boolean;
+  canComment: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -148,6 +151,18 @@ export default function WatchPage() {
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
   const [guestName, setGuestName] = useState('');
+  const [guestNameConfirmed, setGuestNameConfirmed] = useState(false);
+
+  // Restore guest name from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('openframe_guest_name');
+    if (saved) {
+      setGuestName(saved);
+      setGuestNameConfirmed(true);
+    }
+  }, []);
+
+  const isGuest = video ? !video.isAuthenticated : false;
 
   // Fetch video data
   useEffect(() => {
@@ -310,6 +325,7 @@ export default function WatchPage() {
           content: voiceData ? commentText.trim() || null : commentText,
           timestamp: selectedTimestamp ?? currentTime,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
+          ...(isGuest && guestName && { guestName }),
         }),
       });
 
@@ -334,7 +350,7 @@ export default function WatchPage() {
     } finally {
       setIsSubmittingComment(false);
     }
-  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId]);
+  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName]);
 
   // Voice recording handlers
   const startRecording = useCallback(async () => {
@@ -536,11 +552,11 @@ export default function WatchPage() {
               versions: prev.versions.map((v) =>
                 v.id === activeVersionId
                   ? {
-                      ...v,
-                      comments: v.comments.map((c) =>
-                        c.id === commentId ? { ...c, isResolved: !c.isResolved } : c
-                      ),
-                    }
+                    ...v,
+                    comments: v.comments.map((c) =>
+                      c.id === commentId ? { ...c, isResolved: !c.isResolved } : c
+                    ),
+                  }
                   : v
               ),
             };
@@ -567,6 +583,7 @@ export default function WatchPage() {
           timestamp: comments.find((c) => c.id === parentId)?.timestamp ?? currentTime,
           parentId,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
+          ...(isGuest && guestName && { guestName }),
         }),
       });
       if (res.ok) {
@@ -578,13 +595,13 @@ export default function WatchPage() {
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
                 ? {
-                    ...v,
-                    comments: v.comments.map((c) =>
-                      c.id === parentId
-                        ? { ...c, replies: [...c.replies, newReply] }
-                        : c
-                    ),
-                  }
+                  ...v,
+                  comments: v.comments.map((c) =>
+                    c.id === parentId
+                      ? { ...c, replies: [...c.replies, newReply] }
+                      : c
+                  ),
+                }
                 : v
             ),
           };
@@ -686,17 +703,17 @@ export default function WatchPage() {
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
                 ? {
-                    ...v,
-                    comments: v.comments.map((c) => {
-                      if (c.id === commentId) return { ...c, content: editText.trim() };
-                      return {
-                        ...c,
-                        replies: c.replies.map((r) =>
-                          r.id === commentId ? { ...r, content: editText.trim() } : r
-                        ),
-                      };
-                    }),
-                  }
+                  ...v,
+                  comments: v.comments.map((c) => {
+                    if (c.id === commentId) return { ...c, content: editText.trim() };
+                    return {
+                      ...c,
+                      replies: c.replies.map((r) =>
+                        r.id === commentId ? { ...r, content: editText.trim() } : r
+                      ),
+                    };
+                  }),
+                }
                 : v
             ),
           };
@@ -724,14 +741,14 @@ export default function WatchPage() {
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
                 ? {
-                    ...v,
-                    comments: v.comments
-                      .filter((c) => c.id !== commentId)
-                      .map((c) => ({
-                        ...c,
-                        replies: c.replies.filter((r) => r.id !== commentId),
-                      })),
-                  }
+                  ...v,
+                  comments: v.comments
+                    .filter((c) => c.id !== commentId)
+                    .map((c) => ({
+                      ...c,
+                      replies: c.replies.filter((r) => r.id !== commentId),
+                    })),
+                }
                 : v
             ),
           };
@@ -785,6 +802,56 @@ export default function WatchPage() {
           <Button asChild variant="outline">
             <Link href="/">Go Home</Link>
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Guest name gate — prompt guests to enter their name before viewing
+  if (isGuest && !guestNameConfirmed) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="w-full max-w-sm mx-auto p-6">
+          <div className="text-center mb-6">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-4">
+              <User className="h-6 w-6 text-primary" />
+            </div>
+            <h1 className="text-xl font-semibold mb-1">Welcome to OpenFrame</h1>
+            <p className="text-sm text-muted-foreground">
+              Enter your name to view and comment on this video
+            </p>
+          </div>
+          <div className="space-y-3">
+            <Input
+              placeholder="Your name"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && guestName.trim()) {
+                  localStorage.setItem('openframe_guest_name', guestName.trim());
+                  setGuestNameConfirmed(true);
+                }
+              }}
+              autoFocus
+            />
+            <Button
+              className="w-full"
+              disabled={!guestName.trim()}
+              onClick={() => {
+                localStorage.setItem('openframe_guest_name', guestName.trim());
+                setGuestNameConfirmed(true);
+              }}
+            >
+              Continue
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground text-center mt-4">
+            Or{' '}
+            <Link href="/login" className="text-primary hover:underline">
+              sign in
+            </Link>{' '}
+            for a full account
+          </p>
         </div>
       </div>
     );

@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
 import { validateUrl, validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
+import { notifyProjectOwner } from '@/lib/notifications';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
@@ -140,6 +141,18 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 _count: { select: { versions: true } },
             },
         });
+
+        // Notify project owner (fire-and-forget, skip if they added it themselves)
+        if (project.ownerId !== session.user.id) {
+            const baseUrl = process.env.NEXTAUTH_URL || '';
+            notifyProjectOwner(project.ownerId, {
+                type: 'new_video',
+                projectName: project.name,
+                videoTitle: title.trim(),
+                addedBy: session.user.name || 'A team member',
+                url: `${baseUrl}/watch/${video.id}`,
+            }).catch((err) => console.error('Notification failed:', err));
+        }
 
         return NextResponse.json(video, { status: 201 });
     } catch (error) {

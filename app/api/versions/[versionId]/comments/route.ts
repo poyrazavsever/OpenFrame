@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
+import { notifyProjectOwner } from '@/lib/notifications';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
 
@@ -183,6 +184,45 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 },
             },
         });
+
+        // Notify project owner (fire-and-forget, skip self-notifications)
+        const commentAuthorName = session?.user?.name || guestName || 'Someone';
+        const isOwnProject = session?.user?.id === project.ownerId;
+        if (!isOwnProject) {
+            const baseUrl = process.env.NEXTAUTH_URL || '';
+            const videoTitle = version.video.title || 'Untitled Video';
+            const mins = Math.floor(parseFloat(timestamp) / 60);
+            const secs = Math.floor(parseFloat(timestamp) % 60);
+            const ts = `${mins}:${secs.toString().padStart(2, '0')}`;
+
+            if (parentId) {
+                // It's a reply — look up parent author
+                const parentComment = await db.comment.findUnique({
+                    where: { id: parentId },
+                    include: { author: { select: { name: true } } },
+                });
+                notifyProjectOwner(project.ownerId, {
+                    type: 'new_reply',
+                    projectName: project.name,
+                    videoTitle,
+                    replyAuthor: commentAuthorName,
+                    replyText: content?.trim() || '(voice note)',
+                    parentAuthor: parentComment?.author?.name || parentComment?.guestName || 'Someone',
+                    timestamp: ts,
+                    url: `${baseUrl}/watch/${version.video.id}`,
+                }).catch((err) => console.error('Notification failed:', err));
+            } else {
+                notifyProjectOwner(project.ownerId, {
+                    type: 'new_comment',
+                    projectName: project.name,
+                    videoTitle,
+                    commentAuthor: commentAuthorName,
+                    commentText: content?.trim() || '(voice note)',
+                    timestamp: ts,
+                    url: `${baseUrl}/watch/${version.video.id}`,
+                }).catch((err) => console.error('Notification failed:', err));
+            }
+        }
 
         return NextResponse.json(comment, { status: 201 });
     } catch (error) {

@@ -101,7 +101,11 @@ export default function ProjectMembersPage() {
         return;
       }
 
-      setSuccess(`Invited ${data.user.name || data.user.email} as ${inviteRole.toLowerCase()}`);
+      if (data.user) {
+        setSuccess(`Invited ${data.user.name || data.user.email || inviteEmail} as ${inviteRole.toLowerCase()}`);
+      } else {
+        setSuccess(data.message || `Invitation sent to ${inviteEmail}`);
+      }
       setInviteEmail('');
       fetchMembers();
     } catch {

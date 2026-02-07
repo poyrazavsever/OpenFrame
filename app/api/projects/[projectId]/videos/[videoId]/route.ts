@@ -54,7 +54,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return NextResponse.json({ error: 'Access denied' }, { status: 403 });
         }
 
-        return NextResponse.json(video);
+        return NextResponse.json({
+            ...video,
+            isAuthenticated: !!session?.user?.id,
+        });
     } catch (error) {
         console.error('Error fetching video:', error);
         return NextResponse.json(

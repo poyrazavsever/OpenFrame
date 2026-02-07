@@ -53,7 +53,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return NextResponse.json({ error: 'Access denied' }, { status: 403 });
         }
 
-        return NextResponse.json(video);
+        // Include auth context so the client knows if the viewer is a guest
+        const { project, ...videoData } = video;
+        return NextResponse.json({
+            ...videoData,
+            projectId: video.projectId,
+            project: {
+                name: project.name,
+                ownerId: project.ownerId,
+                visibility: project.visibility,
+            },
+            isAuthenticated: !!session?.user?.id,
+            canComment: isOwner || isMember || isPublic,
+        });
     } catch (error) {
         console.error('Error fetching video:', error);
         return NextResponse.json(

@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { VideoCard } from '@/components/video-card';
+import { GuestGate } from '@/components/guest-gate';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 
@@ -135,7 +136,55 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   });
 
   const canEdit = isOwner || project.members[0]?.role === 'ADMIN' || workspaceRole === 'OWNER' || workspaceRole === 'ADMIN';
+  const isAuthenticated = !!session?.user?.id;
 
+  // Guest name gate for unauthenticated users on public projects
+  if (!isAuthenticated && isPublic) {
+    return (
+      <GuestGate>
+        <ProjectContent
+          project={project}
+          projectId={projectId}
+          videos={videos}
+          canEdit={false}
+          isOwner={false}
+          isPublic={isPublic}
+          workspaceRole={null}
+        />
+      </GuestGate>
+    );
+  }
+
+  return (
+    <ProjectContent
+      project={project}
+      projectId={projectId}
+      videos={videos}
+      canEdit={canEdit}
+      isOwner={isOwner}
+      isPublic={isPublic}
+      workspaceRole={workspaceRole}
+    />
+  );
+}
+
+function ProjectContent({
+  project,
+  projectId,
+  videos,
+  canEdit,
+  isOwner,
+  isPublic,
+  workspaceRole,
+}: {
+  project: { name: string; description: string | null; visibility: string; workspace: { id: string; name: string } | null; members: { role: string }[] };
+  projectId: string;
+  videos: { id: string; title: string; thumbnailUrl: string; currentVersion: number; commentCount: number; duration: string; lastUpdated: string }[];
+  canEdit: boolean;
+  isOwner: boolean;
+  isPublic: boolean;
+  workspaceRole: string | null;
+}) {
   return (
     <div className="px-6 lg:px-8 py-8 w-full">
       {/* Back link */}

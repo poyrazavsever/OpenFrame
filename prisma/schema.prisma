@@ -30,6 +30,7 @@ model User {
   projects           Project[]
   comments           Comment[]
   projectMemberships ProjectMember[]
+  notificationSetting NotificationSetting?
   
   @@map("users")
 }
@@ -320,4 +321,52 @@ model ShareLink {
 enum SharePermission {
   VIEW       // Can only view
   COMMENT    // Can view and comment
+}
+
+// ============================================
+// NOTIFICATION SETTINGS
+// ============================================
+
+model NotificationSetting {
+  id        String   @id @default(cuid())
+
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Telegram webhook
+  telegramBotToken  String?   // Bot token from @BotFather
+  telegramChatId    String?   // Chat/group ID to send messages to
+  telegramEnabled   Boolean   @default(false)
+
+  // Email notifications (uses account email by default)
+  emailEnabled      Boolean   @default(false)
+
+  // Event subscriptions
+  onNewVideo        Boolean   @default(true)
+  onNewComment      Boolean   @default(true)
+  onNewReply        Boolean   @default(true)
+
+  // User timezone for notification timestamps (IANA timezone identifier)
+  timezone          String    @default("UTC")
+
+  // Timestamps
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("notification_settings")
+}
+
+// Rate limiting table (created as UNLOGGED via raw SQL migration)
+// Defined here so `prisma db push` doesn't drop it
+model RateLimit {
+  id          Int      @id @default(autoincrement())
+  key         String   @db.VarChar(255)
+  action      String   @db.VarChar(50)
+  count       Int      @default(1)
+  windowStart DateTime @default(now()) @map("window_start")
+
+  @@unique([key, action])
+  @@index([key, action])
+  @@index([windowStart])
+  @@map("rate_limits")
 }

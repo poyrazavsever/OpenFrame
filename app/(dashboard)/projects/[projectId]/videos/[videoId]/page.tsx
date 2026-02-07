@@ -101,6 +101,7 @@ interface VideoData {
     members: { role: string }[];
   };
   versions: (Version & { comments: Comment[] })[];
+  isAuthenticated: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -166,6 +167,14 @@ export default function VideoPage() {
   const [editText, setEditText] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
+
+  // Guest name (for unauthenticated users on public projects)
+  const [guestName, setGuestName] = useState('');
+  useEffect(() => {
+    const saved = localStorage.getItem('openframe_guest_name');
+    if (saved) setGuestName(saved);
+  }, []);
+  const isGuest = video ? !video.isAuthenticated : false;
 
   // New version dialog
   const [showVersionDialog, setShowVersionDialog] = useState(false);
@@ -371,6 +380,7 @@ export default function VideoPage() {
           content: voiceData ? commentText.trim() || null : commentText,
           timestamp: selectedTimestamp ?? currentTime,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
+          ...(isGuest && guestName && { guestName }),
         }),
       });
 
@@ -395,7 +405,7 @@ export default function VideoPage() {
     } finally {
       setIsSubmittingComment(false);
     }
-  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId]);
+  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName]);
 
   // Voice recording handlers
   const startRecording = useCallback(async () => {
@@ -631,6 +641,7 @@ export default function VideoPage() {
           timestamp: comments.find((c) => c.id === parentId)?.timestamp ?? currentTime,
           parentId,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
+          ...(isGuest && guestName && { guestName }),
         }),
       });
       if (res.ok) {
