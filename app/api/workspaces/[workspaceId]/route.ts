@@ -65,7 +65,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
         // Check access
         const isOwner = session?.user?.id === workspace.ownerId;
-        const isMember = workspace.members.some(m => m.userId === session?.user?.id);
+        const isMember = workspace.members.some((m: { userId: string }) => m.userId === session?.user?.id);
 
         if (!isOwner && !isMember) {
             return apiErrors.forbidden('Access denied');

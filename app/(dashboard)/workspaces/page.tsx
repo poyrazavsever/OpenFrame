@@ -66,7 +66,7 @@ export default async function WorkspacesPage() {
       {/* Workspaces Grid */}
       {workspaces.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {workspaces.map((workspace) => (
+          {workspaces.map((workspace: typeof workspaces[number]) => (
             <Link key={workspace.id} href={`/workspaces/${workspace.id}`}>
               <Card className="h-full transition-colors hover:bg-accent/50 cursor-pointer">
                 <CardHeader>

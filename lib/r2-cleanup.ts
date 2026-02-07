@@ -45,7 +45,7 @@ export async function collectVideoVoiceUrls(videoId: string): Promise<string[]> 
         },
         select: { voiceUrl: true },
     });
-    return comments.map((c) => c.voiceUrl).filter(Boolean) as string[];
+    return comments.map((c: { voiceUrl: string | null }) => c.voiceUrl).filter(Boolean) as string[];
 }
 
 /**
@@ -59,7 +59,7 @@ export async function collectProjectVoiceUrls(projectId: string): Promise<string
         },
         select: { voiceUrl: true },
     });
-    return comments.map((c) => c.voiceUrl).filter(Boolean) as string[];
+    return comments.map((c: { voiceUrl: string | null }) => c.voiceUrl).filter(Boolean) as string[];
 }
 
 /**
@@ -73,7 +73,7 @@ export async function collectWorkspaceVoiceUrls(workspaceId: string): Promise<st
         },
         select: { voiceUrl: true },
     });
-    return comments.map((c) => c.voiceUrl).filter(Boolean) as string[];
+    return comments.map((c: { voiceUrl: string | null }) => c.voiceUrl).filter(Boolean) as string[];
 }
 
 /**

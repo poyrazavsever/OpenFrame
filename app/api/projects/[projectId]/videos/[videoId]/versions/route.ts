@@ -106,7 +106,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const nextVersionNumber = (video.versions[0]?.versionNumber || 0) + 1;
 
         // Use transaction to handle active flag
-        const version = await db.$transaction(async (tx) => {
+        const version = await db.$transaction(async (tx: Parameters<Parameters<typeof db.$transaction>[0]>[0]) => {
             // If setActive, deactivate all other versions
             if (setActive) {
                 await tx.videoVersion.updateMany({

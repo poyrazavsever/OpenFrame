@@ -83,7 +83,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         // Check access
         const isPublic = project.visibility === ProjectVisibility.PUBLIC;
         const isOwner = session?.user?.id === project.ownerId;
-        const isMember = project.members.some(m => m.userId === session?.user?.id);
+        const isMember = project.members.some((m: { userId: string }) => m.userId === session?.user?.id);
 
         // Check workspace membership
         let isWorkspaceMember = false;
