@@ -78,7 +78,7 @@ export default async function DashboardPage() {
   }
   const workspaces = Array.from(workspaceMap, ([id, name]) => ({ id, name }));
 
-  const serializedProjects = projects.map((p) => ({
+  const serializedProjects = projects.map((p: typeof projects[0]) => ({
     id: p.id,
     name: p.name,
     description: p.description,
