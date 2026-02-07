@@ -583,7 +583,8 @@ export default function VideoPage() {
       });
 
       if (res.ok) {
-        const newComment = await res.json();
+        const response = await res.json();
+        const newComment = response.data;
         // Replace temp comment with real one
         setVideo((prev) => {
           if (!prev) return prev;
@@ -704,7 +705,8 @@ export default function VideoPage() {
         throw new Error('Failed to upload audio');
       }
 
-      const { url } = await uploadRes.json();
+      const uploadData = await uploadRes.json();
+      const { url } = uploadData.data;
 
       // Submit comment with voice URL
       await handleAddComment({ url, duration: recordingTime });
@@ -947,7 +949,8 @@ export default function VideoPage() {
       });
 
       if (res.ok) {
-        const newReply = await res.json();
+        const response = await res.json();
+        const newReply = response.data;
         // Replace temp reply with real one
         setVideo((prev) => {
           if (!prev) return prev;
@@ -1073,7 +1076,8 @@ export default function VideoPage() {
       formData.append('audio', replyAudioBlob, 'recording.webm');
       const uploadRes = await fetch('/api/upload/audio', { method: 'POST', body: formData });
       if (!uploadRes.ok) throw new Error('Failed to upload audio');
-      const { url } = await uploadRes.json();
+      const uploadData = await uploadRes.json();
+      const { url } = uploadData.data;
       await handleReplyComment(parentId, { url, duration: replyRecordingTime });
     } catch (err) {
       console.error('Failed to submit voice reply:', err);
@@ -1647,17 +1651,17 @@ export default function VideoPage() {
                       )}
                     >
                       <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
-                          <Avatar className="h-6 w-6">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Avatar className="h-6 w-6 shrink-0">
                             <AvatarImage src={comment.author?.image ?? undefined} />
                             <AvatarFallback className="text-xs">
                               {authorName.charAt(0)}
                             </AvatarFallback>
                           </Avatar>
-                          <span className="text-sm font-medium">{authorName}</span>
+                          <span className="text-sm font-medium truncate">{authorName}</span>
                           {comment.tag && (
                             <span
-                              className="text-[10px] font-medium px-2 py-0.5 rounded-full text-white"
+                              className="text-[10px] font-medium px-2 py-0.5 rounded-full text-white shrink-0"
                               style={{ backgroundColor: comment.tag.color }}
                             >
                               {comment.tag.name}
@@ -1665,7 +1669,7 @@ export default function VideoPage() {
                           )}
                         </div>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 shrink-0">
                           <button
                             onClick={() => handleSeekToTimestamp(comment.timestamp)}
                             className="flex items-center gap-1 text-xs text-primary hover:underline px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 transition-colors"

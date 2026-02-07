@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
@@ -164,6 +165,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         await cleanupVideoVoiceFiles(videoId);
 
         await db.video.delete({ where: { id: videoId } });
+
+        revalidatePath(`/projects/${projectId}`);
 
         const response = successResponse({ message: 'Video deleted' });
         return withCacheControl(response, 'private, no-store');
