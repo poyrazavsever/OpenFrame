@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
 import { notifyProjectOwner } from '@/lib/notifications';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
 
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!version) {
-            return NextResponse.json({ error: 'Version not found' }, { status: 404 });
+            return apiErrors.notFound('Version');
         }
 
         const project = version.video.project;
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const isPublic = project.visibility === 'PUBLIC';
 
         if (!isOwner && !isMember && !isPublic) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const { searchParams } = new URL(request.url);
@@ -65,13 +66,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json({ comments });
+        return successResponse({ comments });
     } catch (error) {
         console.error('Error fetching comments:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch comments' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch comments');
     }
 }
 
@@ -101,7 +99,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!version) {
-            return NextResponse.json({ error: 'Version not found' }, { status: 404 });
+            return apiErrors.notFound('Version');
         }
 
         const project = version.video.project;
@@ -113,7 +111,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         // Check if user can comment
         const canComment = isOwner || isMember || isPublic || hasCommentLink;
         if (!canComment) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
@@ -121,17 +119,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         // Validate required fields
         if (timestamp === undefined || timestamp === null) {
-            return NextResponse.json(
-                { error: 'Timestamp is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Timestamp is required');
         }
 
         if (!content && !voiceUrl) {
-            return NextResponse.json(
-                { error: 'Either content or voice recording is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Either content or voice recording is required');
         }
 
         // If replying, verify parent exists in same version
@@ -140,27 +132,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 where: { id: parentId, versionId },
             });
             if (!parent) {
-                return NextResponse.json(
-                    { error: 'Parent comment not found' },
-                    { status: 400 }
-                );
+                return apiErrors.badRequest('Parent comment not found');
             }
         }
 
         // Guest comment validation
         const isGuest = !session?.user?.id;
         if (isGuest && !guestName) {
-            return NextResponse.json(
-                { error: 'Guest name is required for guest comments' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Guest name is required for guest comments');
         }
 
         // Validate voice URL uses safe scheme (allow internal /api/ paths)
         if (voiceUrl && !voiceUrl.startsWith('/api/')) {
             const voiceUrlError = validateOptionalUrl(voiceUrl, 'Voice URL');
             if (voiceUrlError) {
-                return NextResponse.json({ error: voiceUrlError }, { status: 400 });
+                return apiErrors.badRequest(voiceUrlError);
             }
         }
 
@@ -229,12 +215,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             }
         }
 
-        return NextResponse.json(comment, { status: 201 });
+        return successResponse(comment, 201);
     } catch (error) {
         console.error('Error creating comment:', error);
-        return NextResponse.json(
-            { error: 'Failed to create comment' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to create comment');
     }
 }

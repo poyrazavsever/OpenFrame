@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
 import { validateUrl, validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
 import { notifyProjectOwner } from '@/lib/notifications';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         const isOwner = session?.user?.id === project.ownerId;
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const isPublic = project.visibility === 'PUBLIC';
 
         if (!isOwner && !isMember && !isPublic) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const videos = await db.video.findMany({
@@ -46,13 +47,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json({ videos });
+        return successResponse({ videos });
     } catch (error) {
         console.error('Error fetching videos:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch videos' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch videos');
     }
 }
 
@@ -66,7 +64,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const { projectId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         // Check project access (must be owner or admin)
@@ -76,7 +74,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         const isOwner = project.ownerId === session.user.id;
@@ -85,28 +83,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             membership?.role === ProjectMemberRole.ADMIN;
 
         if (!canEdit) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
         const { title, description, videoUrl, providerId, videoId, thumbnailUrl, duration } = body;
 
         if (!title || !videoUrl) {
-            return NextResponse.json(
-                { error: 'Title and video URL are required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Title and video URL are required');
         }
 
         // Validate URLs use safe schemes (http/https only)
         const videoUrlError = validateUrl(videoUrl, 'Video URL');
         if (videoUrlError) {
-            return NextResponse.json({ error: videoUrlError }, { status: 400 });
+            return apiErrors.badRequest(videoUrlError);
         }
 
         const thumbnailUrlError = validateOptionalUrl(thumbnailUrl, 'Thumbnail URL');
         if (thumbnailUrlError) {
-            return NextResponse.json({ error: thumbnailUrlError }, { status: 400 });
+            return apiErrors.badRequest(thumbnailUrlError);
         }
 
         // Get the next position
@@ -154,12 +149,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             }).catch((err) => console.error('Notification failed:', err));
         }
 
-        return NextResponse.json(video, { status: 201 });
+        return successResponse(video, 201);
     } catch (error) {
         console.error('Error creating video:', error);
-        return NextResponse.json(
-            { error: 'Failed to create video' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to create video');
     }
 }

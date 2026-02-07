@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { checkRateLimit, getClientIp, rateLimitHeaders, RATE_LIMIT_CONFIGS } from '@/lib/rate-limit';
+import { apiErrors, successResponse, ErrorCode } from '@/lib/api-response';
 
 export async function POST(request: NextRequest) {
     try {
@@ -11,13 +12,7 @@ export async function POST(request: NextRequest) {
         const rateLimit = await checkRateLimit(rateLimitKey, 'register');
 
         if (!rateLimit.allowed) {
-            return NextResponse.json(
-                { error: 'Too many registration attempts. Please try again later.' },
-                {
-                    status: 429,
-                    headers: rateLimitHeaders(rateLimit, RATE_LIMIT_CONFIGS.register.maxRequests),
-                }
-            );
+            return apiErrors.rateLimited('Too many registration attempts. Please try again later.');
         }
 
         const body = await request.json();
@@ -26,10 +21,7 @@ export async function POST(request: NextRequest) {
         // Validate invite code using constant-time comparison to prevent timing attacks
         const validInviteCode = process.env.INVITE_CODE;
         if (!validInviteCode || !inviteCode) {
-            return NextResponse.json(
-                { error: 'Invalid invite code' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Invalid invite code');
         }
 
         // Constant-time comparison
@@ -43,41 +35,26 @@ export async function POST(request: NextRequest) {
         const isValidCode = isValidLength && timingSafeEqual(validBuffer, compareBuffer);
 
         if (!isValidCode) {
-            return NextResponse.json(
-                { error: 'Invalid invite code' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Invalid invite code');
         }
 
         // Validate required fields
         if (!name || typeof name !== 'string' || name.trim().length < 2) {
-            return NextResponse.json(
-                { error: 'Name must be at least 2 characters' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Name must be at least 2 characters');
         }
 
         if (!email || typeof email !== 'string') {
-            return NextResponse.json(
-                { error: 'Email is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Email is required');
         }
 
         // Basic email validation
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-            return NextResponse.json(
-                { error: 'Invalid email format' },
-                { status: 400 }
-            );
+            return apiErrors.validationError('Invalid email format');
         }
 
         if (!password || typeof password !== 'string' || password.length < 8) {
-            return NextResponse.json(
-                { error: 'Password must be at least 8 characters' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Password must be at least 8 characters');
         }
 
         // Check if email already exists
@@ -86,10 +63,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (existingUser) {
-            return NextResponse.json(
-                { error: 'An account with this email already exists' },
-                { status: 409 }
-            );
+            return apiErrors.conflict('An account with this email already exists');
         }
 
         // Hash password
@@ -110,9 +84,9 @@ export async function POST(request: NextRequest) {
             },
         });
 
-        const response = NextResponse.json(
+        const response = successResponse(
             { message: 'Account created successfully', user },
-            { status: 201 }
+            201
         );
 
         // Add rate limit headers to successful response
@@ -124,9 +98,6 @@ export async function POST(request: NextRequest) {
         return response;
     } catch (error) {
         console.error('Registration error:', error);
-        return NextResponse.json(
-            { error: 'Failed to create account' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to create account');
     }
 }

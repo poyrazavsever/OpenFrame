@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
@@ -52,12 +53,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { projectId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { project } = await checkProjectAccess(projectId, session.user.id);
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         let tags = await db.commentTag.findMany({
@@ -78,10 +79,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             });
         }
 
-        return NextResponse.json(tags);
+        return successResponse(tags);
     } catch (error) {
         console.error('Error fetching tags:', error);
-        return NextResponse.json({ error: 'Failed to fetch tags' }, { status: 500 });
+        return apiErrors.internalError('Failed to fetch tags');
     }
 }
 
@@ -95,27 +96,27 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const { projectId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { canEdit, project } = await checkProjectAccess(projectId, session.user.id);
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
         if (!canEdit) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
         const { name, color } = body;
 
         if (!name?.trim() || !color?.trim()) {
-            return NextResponse.json({ error: 'Name and color are required' }, { status: 400 });
+            return apiErrors.badRequest('Name and color are required');
         }
 
         // Hex color validation
         if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
-            return NextResponse.json({ error: 'Invalid color format' }, { status: 400 });
+            return apiErrors.badRequest('Invalid color format');
         }
 
         // Get max position
@@ -133,12 +134,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(tag, { status: 201 });
+        return successResponse(tag, 201);
     } catch (error) {
         console.error('Error creating tag:', error);
         if ((error as { code?: string }).code === 'P2002') {
-            return NextResponse.json({ error: 'Tag name already exists' }, { status: 409 });
+            return apiErrors.conflict('Tag name already exists');
         }
-        return NextResponse.json({ error: 'Failed to create tag' }, { status: 500 });
+        return apiErrors.internalError('Failed to create tag');
     }
 }

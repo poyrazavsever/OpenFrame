@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
 import { cleanupVideoVoiceFiles } from '@/lib/r2-cleanup';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string }> };
 
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!video) {
-            return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+            return apiErrors.notFound('Video');
         }
 
         // Check access
@@ -53,19 +54,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const isPublic = video.project.visibility === 'PUBLIC';
 
         if (!isOwner && !isMember && !isPublic) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
-        return NextResponse.json({
+        return successResponse({
             ...video,
             isAuthenticated: !!session?.user?.id,
         });
     } catch (error) {
         console.error('Error fetching video:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch video' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch video');
     }
 }
 
@@ -79,7 +77,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const { projectId, videoId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const video = await db.video.findFirst({
@@ -90,7 +88,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!video) {
-            return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+            return apiErrors.notFound('Video');
         }
 
         const isOwner = video.project.ownerId === session.user.id;
@@ -99,7 +97,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             membership?.role === ProjectMemberRole.ADMIN;
 
         if (!canEdit) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
@@ -119,13 +117,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(updatedVideo);
+        return successResponse(updatedVideo);
     } catch (error) {
         console.error('Error updating video:', error);
-        return NextResponse.json(
-            { error: 'Failed to update video' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to update video');
     }
 }
 
@@ -139,7 +134,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const { projectId, videoId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const video = await db.video.findFirst({
@@ -150,7 +145,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!video) {
-            return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+            return apiErrors.notFound('Video');
         }
 
         const isOwner = video.project.ownerId === session.user.id;
@@ -159,10 +154,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const canDelete = isOwner || membership?.role === ProjectMemberRole.ADMIN;
 
         if (!canDelete) {
-            return NextResponse.json(
-                { error: 'Only project owner or admin can delete videos' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only project owner or admin can delete videos');
         }
 
         // Clean up voice files from R2 before cascade delete removes comment rows
@@ -170,12 +162,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
         await db.video.delete({ where: { id: videoId } });
 
-        return NextResponse.json({ success: true, message: 'Video deleted' });
+        return successResponse({ message: 'Video deleted' });
     } catch (error) {
         console.error('Error deleting video:', error);
-        return NextResponse.json(
-            { error: 'Failed to delete video' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to delete video');
     }
 }

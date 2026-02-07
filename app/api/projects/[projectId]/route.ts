@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { ProjectMemberRole, ProjectVisibility } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
 import { cleanupProjectVoiceFiles } from '@/lib/r2-cleanup';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
@@ -76,7 +77,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         // Check access
@@ -103,16 +104,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         }
 
         if (!isPublic && !isOwner && !isMember && !isWorkspaceMember) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
-        return NextResponse.json(project);
+        return successResponse(project);
     } catch (error) {
         console.error('Error fetching project:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch project' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch project');
     }
 }
 
@@ -126,12 +124,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const { projectId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { canEdit } = await checkProjectAccess(projectId, session.user.id);
         if (!canEdit) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
@@ -151,13 +149,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(project);
+        return successResponse(project);
     } catch (error) {
         console.error('Error updating project:', error);
-        return NextResponse.json(
-            { error: 'Failed to update project' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to update project');
     }
 }
 
@@ -171,20 +166,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const { projectId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { canDelete, project } = await checkProjectAccess(projectId, session.user.id);
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         if (!canDelete) {
-            return NextResponse.json(
-                { error: 'Only the project owner can delete it' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only the project owner can delete it');
         }
 
         // Clean up voice files from R2 before cascade delete removes comment rows
@@ -192,12 +184,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
         await db.project.delete({ where: { id: projectId } });
 
-        return NextResponse.json({ success: true, message: 'Project deleted' });
+        return successResponse({ message: 'Project deleted' });
     } catch (error) {
         console.error('Error deleting project:', error);
-        return NextResponse.json(
-            { error: 'Failed to delete project' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to delete project');
     }
 }

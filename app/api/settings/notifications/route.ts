@@ -1,16 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
 import nodemailer from 'nodemailer';
 import { testEmailHtml } from '@/lib/notifications';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 // GET /api/settings/notifications — Fetch current notification preferences
 export async function GET() {
     try {
         const session = await auth();
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const settings = await db.notificationSetting.findUnique({
@@ -18,7 +19,7 @@ export async function GET() {
         });
 
         // Return defaults if no settings exist yet
-        return NextResponse.json(
+        return successResponse(
             settings ?? {
                 telegramBotToken: null,
                 telegramChatId: null,
@@ -32,10 +33,7 @@ export async function GET() {
         );
     } catch (error) {
         console.error('Error fetching notification settings:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch settings' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch settings');
     }
 }
 
@@ -47,7 +45,7 @@ export async function PUT(request: NextRequest) {
 
         const session = await auth();
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const body = await request.json();
@@ -64,10 +62,7 @@ export async function PUT(request: NextRequest) {
 
         // Validate: if enabling Telegram, both token and chatId are required
         if (telegramEnabled && (!telegramBotToken || !telegramChatId)) {
-            return NextResponse.json(
-                { error: 'Telegram Bot Token and Chat ID are required to enable Telegram notifications' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Telegram Bot Token and Chat ID are required to enable Telegram notifications');
         }
 
         const settings = await db.notificationSetting.upsert({
@@ -95,13 +90,10 @@ export async function PUT(request: NextRequest) {
             },
         });
 
-        return NextResponse.json(settings);
+        return successResponse(settings);
     } catch (error) {
         console.error('Error updating notification settings:', error);
-        return NextResponse.json(
-            { error: 'Failed to update settings' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to update settings');
     }
 }
 
@@ -113,7 +105,7 @@ export async function POST(request: NextRequest) {
 
         const session = await auth();
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const body = await request.json();
@@ -121,10 +113,7 @@ export async function POST(request: NextRequest) {
 
         if (channel === 'telegram') {
             if (!telegramBotToken || !telegramChatId) {
-                return NextResponse.json(
-                    { error: 'Bot Token and Chat ID are required' },
-                    { status: 400 }
-                );
+                return apiErrors.badRequest('Bot Token and Chat ID are required');
             }
 
             const settingsUrl = `${process.env.NEXTAUTH_URL || ''}/settings`;
@@ -148,13 +137,10 @@ export async function POST(request: NextRequest) {
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 const desc = (data as { description?: string }).description || 'Unknown error';
-                return NextResponse.json(
-                    { error: `Telegram test failed: ${desc}` },
-                    { status: 400 }
-                );
+                return apiErrors.badRequest(`Telegram test failed: ${desc}`);
             }
 
-            return NextResponse.json({ success: true, message: 'Test message sent to Telegram' });
+            return successResponse({ message: 'Test message sent to Telegram' });
         }
 
         if (channel === 'email') {
@@ -164,10 +150,7 @@ export async function POST(request: NextRequest) {
             });
 
             if (!user?.email) {
-                return NextResponse.json(
-                    { error: 'No email address on your account' },
-                    { status: 400 }
-                );
+                return apiErrors.badRequest('No email address on your account');
             }
 
             const smtpHost = process.env.SMTP_HOST;
@@ -176,10 +159,7 @@ export async function POST(request: NextRequest) {
             const smtpPass = process.env.SMTP_PASSWORD;
 
             if (!smtpHost || !smtpUser || !smtpPass) {
-                return NextResponse.json(
-                    { error: 'Email service not configured (SMTP settings missing)' },
-                    { status: 500 }
-                );
+                return apiErrors.internalError('Email service not configured (SMTP settings missing)');
             }
 
             const transporter = nodemailer.createTransport({
@@ -200,21 +180,15 @@ export async function POST(request: NextRequest) {
                 });
             } catch (emailErr) {
                 console.error('SMTP test email failed:', emailErr);
-                return NextResponse.json(
-                    { error: 'Failed to send test email — check SMTP settings' },
-                    { status: 500 }
-                );
+                return apiErrors.internalError('Failed to send test email — check SMTP settings');
             }
 
-            return NextResponse.json({ success: true, message: `Test email sent to ${user.email}` });
+            return successResponse({ message: `Test email sent to ${user.email}` });
         }
 
-        return NextResponse.json({ error: 'Unknown channel' }, { status: 400 });
+        return apiErrors.badRequest('Unknown channel');
     } catch (error) {
         console.error('Error testing notification:', error);
-        return NextResponse.json(
-            { error: 'Failed to test notification' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to test notification');
     }
 }

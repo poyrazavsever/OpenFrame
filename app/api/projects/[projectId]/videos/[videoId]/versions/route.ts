@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
 import { validateUrl, validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string }> };
 
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!video) {
-            return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+            return apiErrors.notFound('Video');
         }
 
         const isOwner = session?.user?.id === video.project.ownerId;
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const isPublic = video.project.visibility === 'PUBLIC';
 
         if (!isOwner && !isMember && !isPublic) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const versions = await db.videoVersion.findMany({
@@ -42,13 +43,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json({ versions });
+        return successResponse({ versions });
     } catch (error) {
         console.error('Error fetching versions:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch versions' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch versions');
     }
 }
 
@@ -62,7 +60,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const { projectId, videoId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const video = await db.video.findFirst({
@@ -74,7 +72,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!video) {
-            return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+            return apiErrors.notFound('Video');
         }
 
         const isOwner = video.project.ownerId === session.user.id;
@@ -83,28 +81,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             membership?.role === ProjectMemberRole.ADMIN;
 
         if (!canEdit) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
         const { videoUrl, providerId, providerVideoId, versionLabel, thumbnailUrl, duration, setActive } = body;
 
         if (!videoUrl) {
-            return NextResponse.json(
-                { error: 'Video URL is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Video URL is required');
         }
 
         // Validate URLs use safe schemes (http/https only)
         const videoUrlError = validateUrl(videoUrl, 'Video URL');
         if (videoUrlError) {
-            return NextResponse.json({ error: videoUrlError }, { status: 400 });
+            return apiErrors.badRequest(videoUrlError);
         }
 
         const thumbnailUrlError = validateOptionalUrl(thumbnailUrl, 'Thumbnail URL');
         if (thumbnailUrlError) {
-            return NextResponse.json({ error: thumbnailUrlError }, { status: 400 });
+            return apiErrors.badRequest(thumbnailUrlError);
         }
 
         const nextVersionNumber = (video.versions[0]?.versionNumber || 0) + 1;
@@ -138,12 +133,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             });
         });
 
-        return NextResponse.json(version, { status: 201 });
+        return successResponse(version, 201);
     } catch (error) {
         console.error('Error creating version:', error);
-        return NextResponse.json(
-            { error: 'Failed to create version' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to create version');
     }
 }

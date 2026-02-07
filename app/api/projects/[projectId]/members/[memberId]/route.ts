@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; memberId: string }> };
 
@@ -16,7 +17,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const { projectId, memberId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const project = await db.project.findUnique({
@@ -25,14 +26,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         const isOwner = project.ownerId === session.user.id;
         const isAdmin = project.members[0]?.role === ProjectMemberRole.ADMIN;
 
         if (!isOwner && !isAdmin) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
@@ -40,10 +41,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
         const validRoles = ['ADMIN', 'COMMENTATOR'];
         if (!validRoles.includes(role)) {
-            return NextResponse.json(
-                { error: 'Invalid role. Must be ADMIN or COMMENTATOR.' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Invalid role. Must be ADMIN or COMMENTATOR.');
         }
 
         const member = await db.projectMember.update({
@@ -54,13 +52,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(member);
+        return successResponse(member);
     } catch (error) {
         console.error('Error updating member role:', error);
-        return NextResponse.json(
-            { error: 'Failed to update member role' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to update member role');
     }
 }
 
@@ -74,7 +69,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const { projectId, memberId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const project = await db.project.findUnique({
@@ -83,7 +78,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         const isOwner = project.ownerId === session.user.id;
@@ -94,23 +89,20 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!memberToRemove) {
-            return NextResponse.json({ error: 'Member not found' }, { status: 404 });
+            return apiErrors.notFound('Member');
         }
 
         const isSelf = memberToRemove.userId === session.user.id;
 
         if (!isOwner && !isAdmin && !isSelf) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         await db.projectMember.delete({ where: { id: memberId } });
 
-        return NextResponse.json({ success: true, message: 'Member removed' });
+        return successResponse({ message: 'Member removed' });
     } catch (error) {
         console.error('Error removing member:', error);
-        return NextResponse.json(
-            { error: 'Failed to remove member' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to remove member');
     }
 }

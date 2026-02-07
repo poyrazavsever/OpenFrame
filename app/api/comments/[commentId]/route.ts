@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ commentId: string }> };
 
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!comment) {
-            return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
+            return apiErrors.notFound('Comment');
         }
 
         // Authorization check: verify user has access to the project
@@ -50,18 +51,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const isPublic = project.visibility === 'PUBLIC';
 
         if (!isOwner && !isMember && !isPublic) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         // Strip internal project data from response
         const { version: _version, ...commentData } = comment;
-        return NextResponse.json(commentData);
+        return successResponse(commentData);
     } catch (error) {
         console.error('Error fetching comment:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch comment' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch comment');
     }
 }
 
@@ -75,7 +73,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const { commentId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const comment = await db.comment.findUnique({
@@ -98,7 +96,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!comment) {
-            return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
+            return apiErrors.notFound('Comment');
         }
 
         const project = comment.version.video.project;
@@ -111,18 +109,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
         // Only author can edit content
         if (content !== undefined && !isAuthor) {
-            return NextResponse.json(
-                { error: 'Only the author can edit comment content' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only the author can edit comment content');
         }
 
         // Owner, author, or members can resolve/unresolve
         if (isResolved !== undefined && !isOwner && !isAuthor && !isMember) {
-            return NextResponse.json(
-                { error: 'Access denied' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Access denied');
         }
 
         const updateData: Record<string, unknown> = {};
@@ -145,13 +137,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(updatedComment);
+        return successResponse(updatedComment);
     } catch (error) {
         console.error('Error updating comment:', error);
-        return NextResponse.json(
-            { error: 'Failed to update comment' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to update comment');
     }
 }
 
@@ -165,7 +154,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const { commentId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const comment = await db.comment.findUnique({
@@ -181,17 +170,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!comment) {
-            return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
+            return apiErrors.notFound('Comment');
         }
 
         const isOwner = comment.version.video.project.ownerId === session.user.id;
         const isAuthor = comment.authorId === session.user.id;
 
         if (!isOwner && !isAuthor) {
-            return NextResponse.json(
-                { error: 'Only the author or project owner can delete this comment' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only the author or project owner can delete this comment');
         }
 
         // Collect all voice URLs to delete from R2 (comment + its replies)
@@ -223,12 +209,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             }
         }
 
-        return NextResponse.json({ success: true, message: 'Comment deleted' });
+        return successResponse({ message: 'Comment deleted' });
     } catch (error) {
         console.error('Error deleting comment:', error);
-        return NextResponse.json(
-            { error: 'Failed to delete comment' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to delete comment');
     }
 }

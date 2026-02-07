@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { projectId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const project = await db.project.findUnique({
@@ -24,14 +25,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         const isOwner = project.ownerId === session.user.id;
         const isMember = project.members.length > 0;
 
         if (!isOwner && !isMember) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const members = await db.projectMember.findMany({
@@ -47,13 +48,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             select: { id: true, name: true, image: true },
         });
 
-        return NextResponse.json({ members, owner });
+        return successResponse({ members, owner });
     } catch (error) {
         console.error('Error fetching project members:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch members' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch members');
     }
 }
 
@@ -67,7 +65,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const { projectId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         // Check if user is owner or admin
@@ -77,27 +75,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
 
         const isOwner = project.ownerId === session.user.id;
         const isAdmin = project.members[0]?.role === ProjectMemberRole.ADMIN;
 
         if (!isOwner && !isAdmin) {
-            return NextResponse.json(
-                { error: 'Only project owners and admins can invite members' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only project owners and admins can invite members');
         }
 
         const body = await request.json();
         const { email, role } = body;
 
         if (!email || typeof email !== 'string') {
-            return NextResponse.json(
-                { error: 'Email is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Email is required');
         }
 
         // Validate role
@@ -110,17 +102,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!userToInvite) {
-            return NextResponse.json(
-                { message: 'If the user exists, an invitation has been sent.' },
-                { status: 200 }
-            );
+            return successResponse({ message: 'If the user exists, an invitation has been sent.' });
         }
 
         if (userToInvite.id === project.ownerId) {
-            return NextResponse.json(
-                { error: 'Cannot invite the project owner as a member' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Cannot invite the project owner as a member');
         }
 
         // Check if already a member
@@ -129,10 +115,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (existingMember) {
-            return NextResponse.json(
-                { error: 'User is already a member of this project' },
-                { status: 409 }
-            );
+            return apiErrors.conflict('User is already a member of this project');
         }
 
         const member = await db.projectMember.create({
@@ -146,12 +129,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(member, { status: 201 });
+        return successResponse(member, 201);
     } catch (error) {
         console.error('Error inviting project member:', error);
-        return NextResponse.json(
-            { error: 'Failed to invite member' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to invite member');
     }
 }

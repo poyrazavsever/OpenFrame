@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; tagId: string }> };
 
@@ -46,15 +47,15 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const { projectId, tagId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { canEdit, project } = await checkProjectAccess(projectId, session.user.id);
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
         if (!canEdit) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         // Verify tag belongs to this project
@@ -62,7 +63,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             where: { id: tagId },
         });
         if (!existingTag || existingTag.projectId !== projectId) {
-            return NextResponse.json({ error: 'Tag not found' }, { status: 404 });
+            return apiErrors.notFound('Tag');
         }
 
         const body = await request.json();
@@ -71,13 +72,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const updateData: Record<string, unknown> = {};
         if (name !== undefined) {
             if (!name.trim()) {
-                return NextResponse.json({ error: 'Name cannot be empty' }, { status: 400 });
+                return apiErrors.badRequest('Name cannot be empty');
             }
             updateData.name = name.trim();
         }
         if (color !== undefined) {
             if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
-                return NextResponse.json({ error: 'Invalid color format' }, { status: 400 });
+                return apiErrors.badRequest('Invalid color format');
             }
             updateData.color = color.toUpperCase();
         }
@@ -90,13 +91,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             data: updateData,
         });
 
-        return NextResponse.json(tag);
+        return successResponse(tag);
     } catch (error) {
         console.error('Error updating tag:', error);
         if ((error as { code?: string }).code === 'P2002') {
-            return NextResponse.json({ error: 'Tag name already exists' }, { status: 409 });
+            return apiErrors.conflict('Tag name already exists');
         }
-        return NextResponse.json({ error: 'Failed to update tag' }, { status: 500 });
+        return apiErrors.internalError('Failed to update tag');
     }
 }
 
@@ -110,15 +111,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const { projectId, tagId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { canEdit, project } = await checkProjectAccess(projectId, session.user.id);
         if (!project) {
-            return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+            return apiErrors.notFound('Project');
         }
         if (!canEdit) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         // Verify tag belongs to this project
@@ -126,14 +127,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             where: { id: tagId },
         });
         if (!existingTag || existingTag.projectId !== projectId) {
-            return NextResponse.json({ error: 'Tag not found' }, { status: 404 });
+            return apiErrors.notFound('Tag');
         }
 
         await db.commentTag.delete({ where: { id: tagId } });
 
-        return NextResponse.json({ success: true });
+        return successResponse({ message: 'Tag deleted' });
     } catch (error) {
         console.error('Error deleting tag:', error);
-        return NextResponse.json({ error: 'Failed to delete tag' }, { status: 500 });
+        return apiErrors.internalError('Failed to delete tag');
     }
 }

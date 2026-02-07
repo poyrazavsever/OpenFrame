@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
 import { cleanupWorkspaceVoiceFiles } from '@/lib/r2-cleanup';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ workspaceId: string }> };
 
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { workspaceId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const workspace = await db.workspace.findUnique({
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!workspace) {
-            return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+            return apiErrors.notFound('Workspace');
         }
 
         // Check access
@@ -67,16 +68,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const isMember = workspace.members.some(m => m.userId === session?.user?.id);
 
         if (!isOwner && !isMember) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
-        return NextResponse.json(workspace);
+        return successResponse(workspace);
     } catch (error) {
         console.error('Error fetching workspace:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch workspace' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch workspace');
     }
 }
 
@@ -90,12 +88,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const { workspaceId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { isAdmin } = await checkWorkspaceAccess(workspaceId, session.user.id);
         if (!isAdmin) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const body = await request.json();
@@ -114,13 +112,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(workspace);
+        return successResponse(workspace);
     } catch (error) {
         console.error('Error updating workspace:', error);
-        return NextResponse.json(
-            { error: 'Failed to update workspace' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to update workspace');
     }
 }
 
@@ -134,20 +129,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const { workspaceId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { isOwner, workspace } = await checkWorkspaceAccess(workspaceId, session.user.id);
 
         if (!workspace) {
-            return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+            return apiErrors.notFound('Workspace');
         }
 
         if (!isOwner) {
-            return NextResponse.json(
-                { error: 'Only the workspace owner can delete it' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only the workspace owner can delete it');
         }
 
         // Clean up voice files from R2 before cascade delete removes comment rows
@@ -155,12 +147,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
         await db.workspace.delete({ where: { id: workspaceId } });
 
-        return NextResponse.json({ success: true, message: 'Workspace deleted' });
+        return successResponse({ message: 'Workspace deleted' });
     } catch (error) {
         console.error('Error deleting workspace:', error);
-        return NextResponse.json(
-            { error: 'Failed to delete workspace' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to delete workspace');
     }
 }

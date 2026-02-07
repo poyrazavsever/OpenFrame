@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ videoId: string }> };
 
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!video) {
-            return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+            return apiErrors.notFound('Video');
         }
 
         // Check access
@@ -52,12 +53,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const isPublic = video.project.visibility === 'PUBLIC';
 
         if (!isOwner && !isMember && !isPublic) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         // Include auth context so the client knows if the viewer is a guest
         const { project, ...videoData } = video;
-        return NextResponse.json({
+        return successResponse({
             ...videoData,
             projectId: video.projectId,
             project: {
@@ -70,9 +71,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
     } catch (error) {
         console.error('Error fetching video:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch video' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch video');
     }
 }

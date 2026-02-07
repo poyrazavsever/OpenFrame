@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectVisibility } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 // GET /api/projects - List all projects for the authenticated user
 export async function GET(request: NextRequest) {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
         const session = await auth();
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const { searchParams } = new URL(request.url);
@@ -55,21 +56,19 @@ export async function GET(request: NextRequest) {
             }),
         ]);
 
-        return NextResponse.json({
-            projects,
-            pagination: {
+        return successResponse(
+            { projects },
+            200,
+            {
                 page,
                 limit,
                 total,
                 totalPages: Math.ceil(total / limit),
-            },
-        });
+            }
+        );
     } catch (error) {
         console.error('Error fetching projects:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch projects' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch projects');
     }
 }
 
@@ -82,24 +81,18 @@ export async function POST(request: NextRequest) {
         const session = await auth();
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const body = await request.json();
         const { name, description, visibility, workspaceId } = body;
 
         if (!name || typeof name !== 'string' || name.trim().length === 0) {
-            return NextResponse.json(
-                { error: 'Project name is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Project name is required');
         }
 
         if (!workspaceId || typeof workspaceId !== 'string') {
-            return NextResponse.json(
-                { error: 'A workspace is required. Every project must belong to a workspace.' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('A workspace is required. Every project must belong to a workspace.');
         }
 
         // Generate URL-friendly slug
@@ -127,17 +120,14 @@ export async function POST(request: NextRequest) {
         });
 
         if (!workspace) {
-            return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+            return apiErrors.notFound('Workspace');
         }
 
         const isWsOwner = workspace.ownerId === session.user.id;
         const isWsAdmin = workspace.members[0]?.role === 'ADMIN';
 
         if (!isWsOwner && !isWsAdmin) {
-            return NextResponse.json(
-                { error: 'Only workspace owners and admins can create projects' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only workspace owners and admins can create projects');
         }
 
         const project = await db.project.create({
@@ -155,12 +145,9 @@ export async function POST(request: NextRequest) {
             },
         });
 
-        return NextResponse.json(project, { status: 201 });
+        return successResponse(project, 201);
     } catch (error) {
         console.error('Error creating project:', error);
-        return NextResponse.json(
-            { error: 'Failed to create project' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to create project');
     }
 }

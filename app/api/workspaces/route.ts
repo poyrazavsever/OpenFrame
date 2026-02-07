@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 // GET /api/workspaces - List all workspaces for the authenticated user
 export async function GET() {
@@ -9,7 +10,7 @@ export async function GET() {
         const session = await auth();
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         // Get workspaces where user is owner OR a member
@@ -27,13 +28,10 @@ export async function GET() {
             orderBy: { updatedAt: 'desc' },
         });
 
-        return NextResponse.json({ workspaces });
+        return successResponse({ workspaces });
     } catch (error) {
         console.error('Error fetching workspaces:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch workspaces' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch workspaces');
     }
 }
 
@@ -46,17 +44,14 @@ export async function POST(request: NextRequest) {
         const session = await auth();
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const body = await request.json();
         const { name, description } = body;
 
         if (!name || typeof name !== 'string' || name.trim().length === 0) {
-            return NextResponse.json(
-                { error: 'Workspace name is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Workspace name is required');
         }
 
         // Generate slug
@@ -89,12 +84,9 @@ export async function POST(request: NextRequest) {
             },
         });
 
-        return NextResponse.json(workspace, { status: 201 });
+        return successResponse(workspace, 201);
     } catch (error) {
         console.error('Error creating workspace:', error);
-        return NextResponse.json(
-            { error: 'Failed to create workspace' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to create workspace');
     }
 }

@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { WorkspaceMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
+import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ workspaceId: string }> };
 
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { workspaceId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         const workspace = await db.workspace.findUnique({
@@ -24,14 +25,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!workspace) {
-            return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+            return apiErrors.notFound('Workspace');
         }
 
         const isOwner = workspace.ownerId === session.user.id;
         const isMember = workspace.members.length > 0;
 
         if (!isOwner && !isMember) {
-            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+            return apiErrors.forbidden('Access denied');
         }
 
         const members = await db.workspaceMember.findMany({
@@ -48,13 +49,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             select: { id: true, name: true, image: true },
         });
 
-        return NextResponse.json({ members, owner });
+        return successResponse({ members, owner });
     } catch (error) {
         console.error('Error fetching workspace members:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch members' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to fetch members');
     }
 }
 
@@ -68,7 +66,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const { workspaceId } = await params;
 
         if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            return apiErrors.unauthorized();
         }
 
         // Check if user is owner or admin
@@ -78,27 +76,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!workspace) {
-            return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+            return apiErrors.notFound('Workspace');
         }
 
         const isOwner = workspace.ownerId === session.user.id;
         const isAdmin = workspace.members[0]?.role === WorkspaceMemberRole.ADMIN;
 
         if (!isOwner && !isAdmin) {
-            return NextResponse.json(
-                { error: 'Only workspace owners and admins can invite members' },
-                { status: 403 }
-            );
+            return apiErrors.forbidden('Only workspace owners and admins can invite members');
         }
 
         const body = await request.json();
         const { email, role } = body;
 
         if (!email || typeof email !== 'string') {
-            return NextResponse.json(
-                { error: 'Email is required' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Email is required');
         }
 
         // Validate role
@@ -111,17 +103,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (!userToInvite) {
-            return NextResponse.json(
-                { message: 'If the user exists, an invitation has been sent.' },
-                { status: 200 }
-            );
+            return successResponse({ message: 'If the user exists, an invitation has been sent.' });
         }
 
         if (userToInvite.id === workspace.ownerId) {
-            return NextResponse.json(
-                { error: 'Cannot invite the workspace owner as a member' },
-                { status: 400 }
-            );
+            return apiErrors.badRequest('Cannot invite the workspace owner as a member');
         }
 
         // Check if already a member
@@ -130,10 +116,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
 
         if (existingMember) {
-            return NextResponse.json(
-                { error: 'User is already a member of this workspace' },
-                { status: 409 }
-            );
+            return apiErrors.conflict('User is already a member of this workspace');
         }
 
         const member = await db.workspaceMember.create({
@@ -147,12 +130,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        return NextResponse.json(member, { status: 201 });
+        return successResponse(member, 201);
     } catch (error) {
         console.error('Error inviting workspace member:', error);
-        return NextResponse.json(
-            { error: 'Failed to invite member' },
-            { status: 500 }
-        );
+        return apiErrors.internalError('Failed to invite member');
     }
 }
