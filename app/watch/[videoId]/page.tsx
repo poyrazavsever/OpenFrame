@@ -1085,41 +1085,55 @@ export default function WatchPage() {
   // Delete a comment
   const handleDeleteComment = useCallback(async (commentId: string) => {
     setDeletingCommentId(commentId);
+
+    // Optimistically remove from UI
+    const previousVideo = video;
+    setVideo((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        versions: prev.versions.map((v) =>
+          v.id === activeVersionId
+            ? {
+              ...v,
+              comments: v.comments
+                .filter((c) => c.id !== commentId)
+                .map((c) => ({
+                  ...c,
+                  replies: c.replies.filter((r) => r.id !== commentId),
+                })),
+            }
+            : v
+        ),
+      };
+    });
+
     try {
       const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setVideo((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            versions: prev.versions.map((v) =>
-              v.id === activeVersionId
-                ? {
-                  ...v,
-                  comments: v.comments
-                    .filter((c) => c.id !== commentId)
-                    .map((c) => ({
-                      ...c,
-                      replies: c.replies.filter((r) => r.id !== commentId),
-                    })),
-                }
-                : v
-            ),
-          };
-        });
+      if (!res.ok) {
+        setVideo(previousVideo);
       }
     } catch (err) {
       console.error('Failed to delete comment:', err);
+      setVideo(previousVideo);
     } finally {
       setDeletingCommentId(null);
     }
-  }, [activeVersionId]);
+  }, [activeVersionId, video]);
 
   // Poll for new comments every 10 seconds
   useEffect(() => {
     if (!video) return;
     const interval = setInterval(async () => {
       try {
+        const activeVersion = video.versions.find((v) => v.id === activeVersionId);
+        const hasPendingComments = activeVersion?.comments.some(
+          (c) => c.id.startsWith('temp-')
+        ) || activeVersion?.comments.some(
+          (c) => c.replies.some((r) => r.id.startsWith('temp-'))
+        );
+        if (hasPendingComments) return;
+
         const res = await fetch(`/api/watch/${videoId}`);
         if (res.ok) {
           const data = await res.json();
@@ -1128,7 +1142,7 @@ export default function WatchPage() {
       } catch { /* silent */ }
     }, 10000);
     return () => clearInterval(interval);
-  }, [video, videoId]);
+  }, [video, videoId, activeVersionId]);
 
   const getEmbedUrl = (version: Version) => {
     if (version.providerId === 'youtube') {

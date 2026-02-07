@@ -1132,41 +1132,54 @@ export default function VideoPage() {
   // Delete a comment
   const handleDeleteComment = useCallback(async (commentId: string) => {
     setDeletingCommentId(commentId);
+
+    // Optimistically remove from UI
+    const previousVideo = video;
+    setVideo((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        versions: prev.versions.map((v) =>
+          v.id === activeVersionId
+            ? {
+              ...v,
+              comments: v.comments
+                .filter((c) => c.id !== commentId)
+                .map((c) => ({
+                  ...c,
+                  replies: c.replies.filter((r) => r.id !== commentId),
+                })),
+            }
+            : v
+        ),
+      };
+    });
+
     try {
       const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setVideo((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            versions: prev.versions.map((v) =>
-              v.id === activeVersionId
-                ? {
-                  ...v,
-                  comments: v.comments
-                    .filter((c) => c.id !== commentId)
-                    .map((c) => ({
-                      ...c,
-                      replies: c.replies.filter((r) => r.id !== commentId),
-                    })),
-                }
-                : v
-            ),
-          };
-        });
+      if (!res.ok) {
+        setVideo(previousVideo);
       }
     } catch (err) {
       console.error('Failed to delete comment:', err);
+      setVideo(previousVideo);
     } finally {
       setDeletingCommentId(null);
     }
-  }, [activeVersionId]);
+  }, [activeVersionId, video]);
 
   // Poll for new comments every 10 seconds
   useEffect(() => {
     if (!activeVersion) return;
     const interval = setInterval(async () => {
       try {
+        const hasPendingComments = activeVersion.comments.some(
+          (c) => c.id.startsWith('temp-')
+        ) || activeVersion.comments.some(
+          (c) => c.replies.some((r) => r.id.startsWith('temp-'))
+        );
+        if (hasPendingComments) return;
+
         const res = await fetch(`/api/projects/${projectId}/videos/${videoId}`);
         if (res.ok) {
           const data = await res.json();
