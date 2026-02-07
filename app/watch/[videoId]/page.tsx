@@ -147,6 +147,7 @@ export default function WatchPage() {
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const voiceRafRef = useRef<number | null>(null);
   const voiceKnownDurationRef = useRef<number>(0);
+  const isMutatingRef = useRef(false);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
 
@@ -524,6 +525,7 @@ export default function WatchPage() {
     setAudioBlob(null);
 
     setIsSubmittingComment(true);
+    isMutatingRef.current = true;
 
     try {
       const res = await fetch(`/api/versions/${activeVersion.id}/comments`, {
@@ -584,6 +586,7 @@ export default function WatchPage() {
       toast.error('Failed to add comment');
     } finally {
       setIsSubmittingComment(false);
+      isMutatingRef.current = false;
     }
   }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, selectedTagId, availableTags]);
 
@@ -773,6 +776,7 @@ export default function WatchPage() {
 
   const handleResolveComment = useCallback(
     async (commentId: string, currentlyResolved: boolean) => {
+      isMutatingRef.current = true;
       // Optimistically toggle
       setVideo((prev) => {
         if (!prev) return prev;
@@ -837,6 +841,8 @@ export default function WatchPage() {
           };
         });
         toast.error('Failed to update comment');
+      } finally {
+        isMutatingRef.current = false;
       }
     },
     [activeVersionId]
@@ -887,6 +893,7 @@ export default function WatchPage() {
     setReplyRecordingTime(0);
 
     setIsSubmittingReply(true);
+    isMutatingRef.current = true;
 
     try {
       const res = await fetch(`/api/versions/${activeVersion.id}/comments`, {
@@ -968,6 +975,7 @@ export default function WatchPage() {
       toast.error('Failed to add reply');
     } finally {
       setIsSubmittingReply(false);
+      isMutatingRef.current = false;
     }
   }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, guestName]);
 
@@ -1043,6 +1051,7 @@ export default function WatchPage() {
   const handleEditComment = useCallback(async (commentId: string) => {
     if (!editText.trim()) return;
     setIsSubmittingEdit(true);
+    isMutatingRef.current = true;
     try {
       const res = await fetch(`/api/comments/${commentId}`, {
         method: 'PATCH',
@@ -1079,12 +1088,14 @@ export default function WatchPage() {
       console.error('Failed to edit comment:', err);
     } finally {
       setIsSubmittingEdit(false);
+      isMutatingRef.current = false;
     }
   }, [editText, activeVersionId]);
 
   // Delete a comment
   const handleDeleteComment = useCallback(async (commentId: string) => {
     setDeletingCommentId(commentId);
+    isMutatingRef.current = true;
 
     // Optimistically remove from UI
     const previousVideo = video;
@@ -1118,6 +1129,7 @@ export default function WatchPage() {
       setVideo(previousVideo);
     } finally {
       setDeletingCommentId(null);
+      isMutatingRef.current = false;
     }
   }, [activeVersionId, video]);
 
@@ -1126,18 +1138,14 @@ export default function WatchPage() {
     if (!video) return;
     const interval = setInterval(async () => {
       try {
-        const activeVersion = video.versions.find((v) => v.id === activeVersionId);
-        const hasPendingComments = activeVersion?.comments.some(
-          (c) => c.id.startsWith('temp-')
-        ) || activeVersion?.comments.some(
-          (c) => c.replies.some((r) => r.id.startsWith('temp-'))
-        );
-        if (hasPendingComments) return;
+        if (isMutatingRef.current) return;
 
         const res = await fetch(`/api/watch/${videoId}`);
         if (res.ok) {
           const data = await res.json();
-          setVideo(data.data);
+          if (!isMutatingRef.current) {
+            setVideo(data.data);
+          }
         }
       } catch { /* silent */ }
     }, 10000);
