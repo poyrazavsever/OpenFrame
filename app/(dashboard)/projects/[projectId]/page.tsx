@@ -122,7 +122,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   }
 
   // Transform videos for VideoCard component
-  const videos = project.videos.map((video) => {
+  const videos = project.videos.map((video: typeof project.videos[0]) => {
     const activeVersion = video.versions[0];
     return {
       id: video.id,
