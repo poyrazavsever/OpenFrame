@@ -1,8 +1,12 @@
 import Link from 'next/link';
 import { Video, MessageSquare, Mic, Share2, ArrowRight, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { auth } from '@/lib/auth';
 
-export default function HomePage() {
+export default async function HomePage() {
+  const session = await auth();
+  const isLoggedIn = !!session?.user;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -13,12 +17,25 @@ export default function HomePage() {
             <span className="font-bold text-xl">OpenFrame</span>
           </Link>
           <div className="flex items-center gap-4">
-            <Button asChild variant="ghost">
-              <Link href="/login">Sign in</Link>
-            </Button>
-            <Button asChild>
-              <Link href="/dashboard">Get Started</Link>
-            </Button>
+            {isLoggedIn ? (
+              <>
+                <Button asChild variant="ghost">
+                  <Link href="/dashboard">Dashboard</Link>
+                </Button>
+                <Button asChild>
+                  <Link href="/projects/new">New Project</Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button asChild variant="ghost">
+                  <Link href="/login">Sign in</Link>
+                </Button>
+                <Button asChild>
+                  <Link href="/register">Get Started</Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -31,16 +48,25 @@ export default function HomePage() {
             <span className="text-primary">reimagined</span>
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl">
-            Collect timestamped feedback on your videos with text and voice comments. 
+            Collect timestamped feedback on your videos with text and voice comments.
             Share with your team and clients, iterate faster.
           </p>
           <div className="flex flex-col sm:flex-row gap-4">
-            <Button asChild size="lg">
-              <Link href="/dashboard">
-                Start for free
-                <ArrowRight className="h-4 w-4 ml-2" />
-              </Link>
-            </Button>
+            {isLoggedIn ? (
+              <Button asChild size="lg">
+                <Link href="/dashboard">
+                  Go to Dashboard
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Link>
+              </Button>
+            ) : (
+              <Button asChild size="lg">
+                <Link href="/register">
+                  Start for free
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Link>
+              </Button>
+            )}
             <Button asChild variant="outline" size="lg">
               <Link href="#features">
                 <Play className="h-4 w-4 mr-2" />
@@ -88,8 +114,8 @@ export default function HomePage() {
             Join teams who have already switched to OpenFrame for faster, clearer video feedback.
           </p>
           <Button asChild size="lg">
-            <Link href="/dashboard">
-              Get started for free
+            <Link href={isLoggedIn ? '/dashboard' : '/register'}>
+              {isLoggedIn ? 'Go to Dashboard' : 'Get started for free'}
               <ArrowRight className="h-4 w-4 ml-2" />
             </Link>
           </Button>
@@ -112,11 +138,11 @@ export default function HomePage() {
   );
 }
 
-function FeatureCard({ 
-  icon: Icon, 
-  title, 
-  description 
-}: { 
+function FeatureCard({
+  icon: Icon,
+  title,
+  description
+}: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   description: string;

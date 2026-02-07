@@ -1,26 +1,16 @@
 import NextAuth from 'next-auth';
-import { PrismaAdapter } from '@auth/prisma-adapter';
-import Google from 'next-auth/providers/google';
-import GitHub from 'next-auth/providers/github';
 import Credentials from 'next-auth/providers/credentials';
+import bcrypt from 'bcryptjs';
 import { db } from '@/lib/db';
 
+// Dummy hash for timing-safe comparison when user doesn't exist
+// This prevents user enumeration via timing attacks
+const DUMMY_HASH = '$2a$12$000000000000000000000uGG3k3xK2CVTxXrT7VW2sGd1XrY6Ky';
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  adapter: PrismaAdapter(db),
+  // Note: We don't use PrismaAdapter with Credentials + JWT strategy
+  // The adapter is for OAuth providers that need to store accounts/sessions in DB
   providers: [
-    // Google OAuth - uncomment and add credentials when ready
-    // Google({
-    //   clientId: process.env.GOOGLE_CLIENT_ID,
-    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    // }),
-    
-    // GitHub OAuth - uncomment and add credentials when ready  
-    // GitHub({
-    //   clientId: process.env.GITHUB_ID,
-    //   clientSecret: process.env.GITHUB_SECRET,
-    // }),
-    
-    // Email/Password - for development, add proper provider in production
     Credentials({
       name: 'credentials',
       credentials: {
@@ -28,28 +18,43 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        // TODO: Implement proper credential validation
-        // This is a placeholder for development
-        if (!credentials?.email) {
+        if (!credentials?.email || !credentials?.password) {
           return null;
         }
-        
-        // In production, verify password hash here
+
+        const email = credentials.email as string;
+        const password = credentials.password as string;
+
+        // Find user by email
         const user = await db.user.findUnique({
-          where: { email: credentials.email as string },
+          where: { email: email.toLowerCase() },
         });
-        
-        return user;
+
+        // Always perform bcrypt comparison to prevent timing attacks
+        // If user doesn't exist, compare against dummy hash
+        const hashToCompare = user?.password || DUMMY_HASH;
+        const isValidPassword = await bcrypt.compare(password, hashToCompare);
+
+        // Only return user if they exist AND password is valid
+        if (!user || !user.password || !isValidPassword) {
+          return null;
+        }
+
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          image: user.image,
+        };
       },
     }),
   ],
   session: {
     strategy: 'jwt',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   pages: {
     signIn: '/login',
-    // signUp: '/register',
-    // error: '/auth/error',
   },
   callbacks: {
     async session({ session, token }) {

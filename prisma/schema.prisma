@@ -18,6 +18,7 @@ model User {
   email         String?   @unique
   emailVerified DateTime?
   image         String?
+  password      String?   // Hashed password for email/password auth
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -248,7 +249,7 @@ model ShareLink {
   expiresAt   DateTime?       // Link expiration
   maxUses     Int?            // Maximum number of uses
   useCount    Int             @default(0)
-  password    String?         // Optional password protection
+  passwordHash String?        // Bcrypt hash of optional password protection
   
   // Settings
   allowGuests Boolean         @default(true) // Allow comments without account
