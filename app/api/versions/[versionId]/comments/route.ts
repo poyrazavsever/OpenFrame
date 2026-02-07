@@ -1,0 +1,189 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { auth } from '@/lib/auth';
+import { validateOptionalUrl } from '@/lib/validation';
+
+type RouteParams = { params: Promise<{ versionId: string }> };
+
+// GET /api/versions/[versionId]/comments
+export async function GET(request: NextRequest, { params }: RouteParams) {
+    try {
+        const session = await auth();
+        const { versionId } = await params;
+
+        // Get version with project access info
+        const version = await db.videoVersion.findUnique({
+            where: { id: versionId },
+            include: {
+                video: {
+                    include: {
+                        project: {
+                            include: {
+                                members: { where: { userId: session?.user?.id || '' } },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!version) {
+            return NextResponse.json({ error: 'Version not found' }, { status: 404 });
+        }
+
+        const project = version.video.project;
+        const isOwner = session?.user?.id === project.ownerId;
+        const isMember = project.members.length > 0;
+        const isPublicOrLink = project.visibility !== 'PRIVATE';
+
+        if (!isOwner && !isMember && !isPublicOrLink) {
+            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+        }
+
+        const { searchParams } = new URL(request.url);
+        const includeResolved = searchParams.get('includeResolved') !== 'false';
+
+        const comments = await db.comment.findMany({
+            where: {
+                versionId,
+                parentId: null, // Only top-level comments
+                ...(includeResolved ? {} : { isResolved: false }),
+            },
+            orderBy: { timestamp: 'asc' },
+            include: {
+                author: { select: { id: true, name: true, image: true } },
+                replies: {
+                    orderBy: { createdAt: 'asc' },
+                    include: {
+                        author: { select: { id: true, name: true, image: true } },
+                    },
+                },
+            },
+        });
+
+        return NextResponse.json({ comments });
+    } catch (error) {
+        console.error('Error fetching comments:', error);
+        return NextResponse.json(
+            { error: 'Failed to fetch comments' },
+            { status: 500 }
+        );
+    }
+}
+
+// POST /api/versions/[versionId]/comments
+export async function POST(request: NextRequest, { params }: RouteParams) {
+    try {
+        const session = await auth();
+        const { versionId } = await params;
+
+        const version = await db.videoVersion.findUnique({
+            where: { id: versionId },
+            include: {
+                video: {
+                    include: {
+                        project: {
+                            include: {
+                                members: { where: { userId: session?.user?.id || '' } },
+                                shareLinks: { where: { permission: 'COMMENT' } },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!version) {
+            return NextResponse.json({ error: 'Version not found' }, { status: 404 });
+        }
+
+        const project = version.video.project;
+        const isOwner = session?.user?.id === project.ownerId;
+        const isMember = project.members.length > 0;
+        const hasCommentLink = project.shareLinks.length > 0;
+        const isPublic = project.visibility === 'PUBLIC';
+
+        // Check if user can comment
+        const canComment = isOwner || isMember || isPublic || hasCommentLink;
+        if (!canComment) {
+            return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+        }
+
+        const body = await request.json();
+        const { content, timestamp, timestampEnd, parentId, voiceUrl, voiceDuration, guestName, guestEmail } = body;
+
+        // Validate required fields
+        if (timestamp === undefined || timestamp === null) {
+            return NextResponse.json(
+                { error: 'Timestamp is required' },
+                { status: 400 }
+            );
+        }
+
+        if (!content && !voiceUrl) {
+            return NextResponse.json(
+                { error: 'Either content or voice recording is required' },
+                { status: 400 }
+            );
+        }
+
+        // If replying, verify parent exists in same version
+        if (parentId) {
+            const parent = await db.comment.findFirst({
+                where: { id: parentId, versionId },
+            });
+            if (!parent) {
+                return NextResponse.json(
+                    { error: 'Parent comment not found' },
+                    { status: 400 }
+                );
+            }
+        }
+
+        // Guest comment validation
+        const isGuest = !session?.user?.id;
+        if (isGuest && !guestName) {
+            return NextResponse.json(
+                { error: 'Guest name is required for guest comments' },
+                { status: 400 }
+            );
+        }
+
+        // Validate voice URL uses safe scheme
+        const voiceUrlError = validateOptionalUrl(voiceUrl, 'Voice URL');
+        if (voiceUrlError) {
+            return NextResponse.json({ error: voiceUrlError }, { status: 400 });
+        }
+
+        const comment = await db.comment.create({
+            data: {
+                content: content?.trim() || null,
+                timestamp: parseFloat(timestamp),
+                timestampEnd: timestampEnd ? parseFloat(timestampEnd) : null,
+                parentId: parentId || null,
+                voiceUrl: voiceUrl || null,
+                voiceDuration: voiceDuration || null,
+                authorId: session?.user?.id || null,
+                guestName: isGuest ? guestName : null,
+                guestEmail: isGuest ? guestEmail : null,
+                versionId,
+            },
+            include: {
+                author: { select: { id: true, name: true, image: true } },
+                replies: {
+                    include: {
+                        author: { select: { id: true, name: true, image: true } },
+                    },
+                },
+            },
+        });
+
+        return NextResponse.json(comment, { status: 201 });
+    } catch (error) {
+        console.error('Error creating comment:', error);
+        return NextResponse.json(
+            { error: 'Failed to create comment' },
+            { status: 500 }
+        );
+    }
+}
