@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
 import { cleanupVideoVoiceFiles } from '@/lib/r2-cleanup';
@@ -18,9 +18,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const video = await db.video.findFirst({
             where: { id: videoId, projectId },
             include: {
-                project: {
-                    include: { members: { where: { userId: session?.user?.id || '' } } },
-                },
+                project: true,
                 versions: {
                     orderBy: { versionNumber: 'desc' },
                     include: {
@@ -49,12 +47,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Video');
         }
 
-        // Check access
-        const isOwner = session?.user?.id === video.project.ownerId;
-        const isMember = video.project.members.length > 0;
-        const isPublic = video.project.visibility === 'PUBLIC';
+        // Check access including workspace membership
+        const access = await checkProjectAccess(video.project, session?.user?.id);
 
-        if (!isOwner && !isMember && !isPublic) {
+        if (!access.hasAccess) {
             return apiErrors.forbidden('Access denied');
         }
 

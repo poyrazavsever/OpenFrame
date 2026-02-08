@@ -2,6 +2,7 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { db } from '@/lib/db';
+import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 
 // Dummy hash for timing-safe comparison when user doesn't exist
 // This prevents user enumeration via timing attacks
@@ -72,3 +73,55 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
 });
+
+// Helper to check project access including workspace membership
+export async function checkProjectAccess(
+  project: { id: string; ownerId: string; workspaceId: string; visibility: string },
+  userId: string | undefined
+) {
+  const isOwner = userId === project.ownerId;
+  const isPublic = project.visibility === 'PUBLIC';
+
+  // Get project membership
+  const projectMember = userId
+    ? await db.projectMember.findUnique({
+        where: { projectId_userId: { projectId: project.id, userId } },
+      })
+    : null;
+  const isProjectMember = !!projectMember;
+  const isProjectAdmin = projectMember?.role === ProjectMemberRole.ADMIN;
+
+  // Check workspace membership
+  let workspaceRole: string | null = null;
+  if (!isOwner && !isProjectMember && userId) {
+    const wsMember = await db.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId: project.workspaceId, userId } },
+    });
+    const wsOwner = await db.workspace.findUnique({
+      where: { id: project.workspaceId },
+      select: { ownerId: true },
+    });
+    if (wsOwner?.ownerId === userId) {
+      workspaceRole = 'OWNER';
+    } else if (wsMember) {
+      workspaceRole = wsMember.role;
+    }
+  }
+  const isWorkspaceMember = !!workspaceRole;
+  const isWorkspaceAdmin = workspaceRole === WorkspaceMemberRole.ADMIN || workspaceRole === 'OWNER';
+
+  const hasAccess = isOwner || isProjectMember || isPublic || isWorkspaceMember;
+  const canEdit = isOwner || isProjectAdmin || isWorkspaceAdmin;
+  const canDelete = isOwner || workspaceRole === 'OWNER';
+
+  return {
+    isOwner,
+    isProjectMember,
+    isProjectAdmin,
+    isWorkspaceMember,
+    isWorkspaceAdmin,
+    hasAccess,
+    canEdit,
+    canDelete,
+  };
+}
