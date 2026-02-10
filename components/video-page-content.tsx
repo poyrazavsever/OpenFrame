@@ -50,6 +50,16 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -115,12 +125,18 @@ interface VideoData {
   };
   versions: (Version & { comments: Comment[] })[];
   isAuthenticated: boolean;
+  currentUserId: string | null;
   canComment?: boolean;
 }
 
 function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
+  const totalSeconds = Math.floor(seconds);
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hrs > 0) {
+    return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
@@ -138,6 +154,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const playerRef = useRef<YT.Player | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
   const [video, setVideo] = useState<VideoData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -149,6 +166,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [isMuted, setIsMuted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [cursorIdle, setCursorIdle] = useState(false);
+  const cursorIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
@@ -181,13 +200,14 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const replyRecordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [editTagId, setEditTagId] = useState<string | null>(null);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
   const isMutatingRef = useRef(false);
 
   const [guestName, setGuestName] = useState('');
   const [guestNameConfirmed, setGuestNameConfirmed] = useState(mode === 'dashboard');
-  
+
   useEffect(() => {
     const saved = localStorage.getItem('openframe_guest_name');
     if (saved) {
@@ -210,7 +230,30 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
   const projectId = propProjectId || video?.projectId;
 
-  const apiBasePath = mode === 'dashboard' 
+  // Cursor idle detection: hide overlay when cursor idle for 3s while playing
+  const handleVideoMouseMove = useCallback(() => {
+    setCursorIdle(false);
+    if (cursorIdleTimerRef.current) clearTimeout(cursorIdleTimerRef.current);
+    cursorIdleTimerRef.current = setTimeout(() => {
+      setCursorIdle(true);
+    }, 3000);
+  }, []);
+
+  const handleVideoMouseLeave = useCallback(() => {
+    if (cursorIdleTimerRef.current) clearTimeout(cursorIdleTimerRef.current);
+    setCursorIdle(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cursorIdleTimerRef.current) clearTimeout(cursorIdleTimerRef.current);
+    };
+  }, []);
+
+  // Determine current user ID for permission checks
+  const currentUserId = video?.currentUserId || null;
+
+  const apiBasePath = mode === 'dashboard'
     ? `/api/projects/${propProjectId}/videos/${videoId}`
     : `/api/watch/${videoId}`;
 
@@ -220,7 +263,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         const res = await fetch(apiBasePath, { cache: 'no-store' });
         if (!res.ok) {
           const errorText = mode === 'dashboard' ? await res.text() : '';
-          setError(mode === 'dashboard' 
+          setError(mode === 'dashboard'
             ? `Failed to load video: ${res.status} ${errorText}`
             : 'Video not found or access denied'
           );
@@ -242,8 +285,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     fetchVideo();
   }, [apiBasePath, mode]);
 
-  const activeVersion = video?.versions?.find((v) => v.id === activeVersionId) || 
-    video?.versions?.find((v) => v.isActive) || 
+  const activeVersion = video?.versions?.find((v) => v.id === activeVersionId) ||
+    video?.versions?.find((v) => v.isActive) ||
     video?.versions?.[0];
   const comments = activeVersion?.comments || [];
   const filteredComments = comments.filter((c) => showResolved || !c.isResolved);
@@ -323,6 +366,31 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       window.onYouTubeIframeAPIReady = undefined;
     };
   }, [activeVersionId]);
+
+  // Save detected duration to DB if the version doesn't have one stored
+  useEffect(() => {
+    if (!videoDuration || !activeVersion || !propProjectId) return;
+    if (activeVersion.duration && activeVersion.duration > 0) return;
+
+    const roundedDuration = Math.round(videoDuration);
+    // Fire-and-forget PATCH to save duration
+    fetch(`/api/projects/${propProjectId}/videos/${videoId}/versions/${activeVersion.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duration: roundedDuration }),
+    }).catch(() => { /* ignore save errors */ });
+
+    // Also update local state so the version object has the duration
+    setVideo((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        versions: prev.versions.map((v) =>
+          v.id === activeVersion.id ? { ...v, duration: roundedDuration } : v
+        ),
+      };
+    });
+  }, [videoDuration, activeVersion?.id, activeVersion?.duration, propProjectId, videoId]);
 
   useEffect(() => {
     if (!isReady || !playerRef.current) return;
@@ -824,11 +892,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           versions: prev.versions.map((v) =>
             v.id === activeVersionId
               ? {
-                  ...v,
-                  comments: v.comments.map((c) =>
-                    c.id === commentId ? { ...c, isResolved: !c.isResolved } : c
-                  ),
-                }
+                ...v,
+                comments: v.comments.map((c) =>
+                  c.id === commentId ? { ...c, isResolved: !c.isResolved } : c
+                ),
+              }
               : v
           ),
         };
@@ -849,11 +917,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
               versions: prev.versions.map((v) =>
                 v.id === activeVersionId
                   ? {
-                      ...v,
-                      comments: v.comments.map((c) =>
-                        c.id === commentId ? { ...c, isResolved: currentlyResolved } : c
-                      ),
-                    }
+                    ...v,
+                    comments: v.comments.map((c) =>
+                      c.id === commentId ? { ...c, isResolved: currentlyResolved } : c
+                    ),
+                  }
                   : v
               ),
             };
@@ -868,11 +936,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
                 ? {
-                    ...v,
-                    comments: v.comments.map((c) =>
-                      c.id === commentId ? { ...c, isResolved: currentlyResolved } : c
-                    ),
-                  }
+                  ...v,
+                  comments: v.comments.map((c) =>
+                    c.id === commentId ? { ...c, isResolved: currentlyResolved } : c
+                  ),
+                }
                 : v
             ),
           };
@@ -909,13 +977,13 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         versions: prev.versions.map((v) =>
           v.id === activeVersionId
             ? {
-                ...v,
-                comments: v.comments.map((c) =>
-                  c.id === parentId
-                    ? { ...c, replies: [...c.replies, optimisticReply] }
-                    : c
-                ),
-              }
+              ...v,
+              comments: v.comments.map((c) =>
+                c.id === parentId
+                  ? { ...c, replies: [...c.replies, optimisticReply] }
+                  : c
+              ),
+            }
             : v
         ),
       };
@@ -952,13 +1020,13 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
                 ? {
-                    ...v,
-                    comments: v.comments.map((c) =>
-                      c.id === parentId
-                        ? { ...c, replies: c.replies.map(r => r.id === tempId ? newReply : r) }
-                        : c
-                    ),
-                  }
+                  ...v,
+                  comments: v.comments.map((c) =>
+                    c.id === parentId
+                      ? { ...c, replies: c.replies.map(r => r.id === tempId ? newReply : r) }
+                      : c
+                  ),
+                }
                 : v
             ),
           };
@@ -971,13 +1039,13 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
                 ? {
-                    ...v,
-                    comments: v.comments.map((c) =>
-                      c.id === parentId
-                        ? { ...c, replies: c.replies.filter(r => r.id !== tempId) }
-                        : c
-                    ),
-                  }
+                  ...v,
+                  comments: v.comments.map((c) =>
+                    c.id === parentId
+                      ? { ...c, replies: c.replies.filter(r => r.id !== tempId) }
+                      : c
+                  ),
+                }
                 : v
             ),
           };
@@ -992,13 +1060,13 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           versions: prev.versions.map((v) =>
             v.id === activeVersionId
               ? {
-                  ...v,
-                  comments: v.comments.map((c) =>
-                    c.id === parentId
-                      ? { ...c, replies: c.replies.filter(r => r.id !== tempId) }
-                      : c
-                  ),
-                }
+                ...v,
+                comments: v.comments.map((c) =>
+                  c.id === parentId
+                    ? { ...c, replies: c.replies.filter(r => r.id !== tempId) }
+                    : c
+                ),
+              }
               : v
           ),
         };
@@ -1082,12 +1150,15 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     setIsSubmittingEdit(true);
     isMutatingRef.current = true;
     try {
+      const body: Record<string, unknown> = { content: editText };
+      if (editTagId !== undefined) body.tagId = editTagId;
       const res = await fetch(`/api/comments/${commentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: editText }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
+        const editedTag = editTagId ? availableTags.find(t => t.id === editTagId) || null : null;
         setVideo((prev) => {
           if (!prev) return prev;
           return {
@@ -1097,7 +1168,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                 ? {
                   ...v,
                   comments: v.comments.map((c) => {
-                    if (c.id === commentId) return { ...c, content: editText.trim() };
+                    if (c.id === commentId) return { ...c, content: editText.trim(), tag: editTagId !== undefined ? editedTag : c.tag };
                     return {
                       ...c,
                       replies: c.replies.map((r) =>
@@ -1112,6 +1183,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         });
         setEditingCommentId(null);
         setEditText('');
+        setEditTagId(null);
       }
     } catch (err) {
       console.error('Failed to edit comment:', err);
@@ -1119,7 +1191,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsSubmittingEdit(false);
       isMutatingRef.current = false;
     }
-  }, [editText, activeVersionId]);
+  }, [editText, editTagId, activeVersionId, availableTags]);
 
   const handleDeleteComment = useCallback(async (commentId: string) => {
     setDeletingCommentId(commentId);
@@ -1217,13 +1289,20 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       });
 
       if (res.ok) {
-        const videoRes = await fetch(`/api/projects/${propProjectId}/videos/${videoId}`);
-        if (videoRes.ok) {
-          const data = await videoRes.json();
-          setVideo(data.data);
-          const active = data.data.versions.find((v: Version) => v.isActive) || data.data.versions[0];
-          if (active) setActiveVersionId(active.id);
-        }
+        const versionData = await res.json();
+        const newVersion = versionData.data;
+        // Optimistically add the new version to local state instead of refetching
+        setVideo((prev) => {
+          if (!prev) return prev;
+          const updatedVersions = prev.versions.map(v => ({ ...v, isActive: false }));
+          const createdVersion = {
+            ...newVersion,
+            comments: [],
+          };
+          updatedVersions.unshift(createdVersion);
+          return { ...prev, versions: updatedVersions };
+        });
+        setActiveVersionId(newVersion.id);
         setShowVersionDialog(false);
         setNewVersionUrl('');
         setNewVersionLabel('');
@@ -1233,6 +1312,43 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       console.error('Failed to create version:', err);
     } finally {
       setIsCreatingVersion(false);
+    }
+  };
+
+  // Version deletion
+  const [showDeleteVersionDialog, setShowDeleteVersionDialog] = useState(false);
+  const [versionToDelete, setVersionToDelete] = useState<string | null>(null);
+  const [isDeletingVersion, setIsDeletingVersion] = useState(false);
+
+  const handleDeleteVersion = async () => {
+    if (!versionToDelete || !propProjectId) return;
+    setIsDeletingVersion(true);
+    try {
+      const res = await fetch(
+        `/api/projects/${propProjectId}/videos/${videoId}/versions/${versionToDelete}`,
+        { method: 'DELETE' }
+      );
+      if (res.ok) {
+        setVideo((prev) => {
+          if (!prev) return prev;
+          const remaining = prev.versions.filter((v) => v.id !== versionToDelete);
+          return { ...prev, versions: remaining };
+        });
+        // If deleted version was active, switch to the first remaining
+        if (activeVersionId === versionToDelete && video) {
+          const remaining = video.versions.filter((v) => v.id !== versionToDelete);
+          if (remaining.length > 0) setActiveVersionId(remaining[0].id);
+        }
+        setShowDeleteVersionDialog(false);
+        setVersionToDelete(null);
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Failed to delete version');
+      }
+    } catch {
+      toast.error('Failed to delete version');
+    } finally {
+      setIsDeletingVersion(false);
     }
   };
 
@@ -1255,8 +1371,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   };
 
   const containerHeight = mode === 'dashboard' ? 'h-[calc(100vh-3.5rem)]' : 'h-screen';
-  const backHref = mode === 'dashboard' 
-    ? `/projects/${propProjectId}` 
+  const backHref = mode === 'dashboard'
+    ? `/projects/${propProjectId}`
     : (video?.projectId ? `/projects/${video.projectId}` : '/');
 
   if (loading) {
@@ -1449,8 +1565,46 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                       </span>
                     </DropdownMenuItem>
                   ))}
+                  {mode === 'dashboard' && video.versions.length > 1 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => {
+                          setVersionToDelete(activeVersionId);
+                          setShowDeleteVersionDialog(true);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Current Version
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              {/* Version Delete Confirmation */}
+              <AlertDialog open={showDeleteVersionDialog} onOpenChange={setShowDeleteVersionDialog}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this version?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete this version and all its comments. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isDeletingVersion}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDeleteVersion}
+                      disabled={isDeletingVersion}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      {isDeletingVersion && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Delete Version
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
 
               {mode === 'dashboard' && (
                 <>
@@ -1531,8 +1685,14 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           </div>
 
           <div
-            className="flex-1 bg-black flex items-center justify-center relative cursor-pointer group min-h-0"
+            ref={videoContainerRef}
+            className={cn(
+              'flex-1 bg-black flex items-center justify-center relative cursor-pointer group min-h-0',
+              cursorIdle && isPlaying && 'cursor-none'
+            )}
             onClick={handlePlayPause}
+            onMouseMove={handleVideoMouseMove}
+            onMouseLeave={handleVideoMouseLeave}
           >
             <div className="relative w-full h-full">
               <iframe
@@ -1546,8 +1706,10 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
               <div
                 className={cn(
-                  'absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity',
-                  isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+                  'absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity duration-300',
+                  isPlaying
+                    ? cursorIdle ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'
+                    : 'opacity-100'
                 )}
               >
                 <div className="w-16 h-16 rounded-full bg-black/60 flex items-center justify-center">
@@ -1705,14 +1867,6 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                             </AvatarFallback>
                           </Avatar>
                           <span className="text-sm font-medium truncate">{authorName}</span>
-                          {comment.tag && (
-                            <span
-                              className="text-[10px] font-medium px-2 py-0.5 rounded-full text-white shrink-0"
-                              style={{ backgroundColor: comment.tag.color }}
-                            >
-                              {comment.tag.name}
-                            </span>
-                          )}
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
@@ -1739,40 +1893,45 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                               <Circle className="h-4 w-4" />
                             )}
                           </Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                              >
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => {
-                                setReplyingTo(comment.id);
-                                setReplyText('');
-                              }}>
-                                <Reply className="h-4 w-4 mr-2" />
-                                Reply
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => {
-                                setEditingCommentId(comment.id);
-                                setEditText(comment.content || '');
-                              }}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => handleDeleteComment(comment.id)}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {(comment.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => {
+                                  setReplyingTo(comment.id);
+                                  setReplyText('');
+                                }}>
+                                  <Reply className="h-4 w-4 mr-2" />
+                                  Reply
+                                </DropdownMenuItem>
+                                {comment.author?.id === currentUserId && (
+                                  <DropdownMenuItem onClick={() => {
+                                    setEditingCommentId(comment.id);
+                                    setEditText(comment.content || '');
+                                    setEditTagId(comment.tag?.id || null);
+                                  }}>
+                                    <Pencil className="h-4 w-4 mr-2" />
+                                    Edit
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onClick={() => handleDeleteComment(comment.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </div>
                       </div>
 
@@ -1791,10 +1950,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                               if (e.key === 'Escape') {
                                 setEditingCommentId(null);
                                 setEditText('');
+                                setEditTagId(null);
                               }
                             }}
                           />
-                          <div className="flex gap-1">
+                          <div className="flex items-center gap-1">
                             <Button
                               size="sm"
                               onClick={() => handleEditComment(comment.id)}
@@ -1806,11 +1966,50 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => { setEditingCommentId(null); setEditText(''); }}
+                              onClick={() => { setEditingCommentId(null); setEditText(''); setEditTagId(null); }}
                               className="h-7 text-xs"
                             >
                               Cancel
                             </Button>
+                            {availableTags.length > 0 && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant={editTagId ? 'default' : 'outline'}
+                                    className="h-7 text-xs ml-auto"
+                                    style={editTagId ? {
+                                      backgroundColor: availableTags.find(t => t.id === editTagId)?.color
+                                    } : undefined}
+                                  >
+                                    <Tag className="h-3 w-3 mr-1" />
+                                    {editTagId ? availableTags.find(t => t.id === editTagId)?.name || 'Tag' : 'Tag'}
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => setEditTagId(null)} className="gap-2">
+                                    <X className="h-3 w-3" />
+                                    No Tag
+                                    {!editTagId && <span className="ml-auto">✓</span>}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  {availableTags.map((tag) => (
+                                    <DropdownMenuItem
+                                      key={tag.id}
+                                      onClick={() => setEditTagId(tag.id)}
+                                      className="gap-2"
+                                    >
+                                      <span
+                                        className="w-3 h-3 rounded-full shrink-0"
+                                        style={{ backgroundColor: tag.color }}
+                                      />
+                                      {tag.name}
+                                      {editTagId === tag.id && <span className="ml-auto">✓</span>}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
                           </div>
                         </div>
                       ) : (
@@ -1853,9 +2052,19 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                         </div>
                       )}
 
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(comment.createdAt).toLocaleDateString()}
-                      </p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(comment.createdAt).toLocaleDateString()}
+                        </p>
+                        {comment.tag && (
+                          <span
+                            className="text-[10px] font-medium px-2 py-0.5 rounded-full text-white shrink-0"
+                            style={{ backgroundColor: comment.tag.color }}
+                          >
+                            {comment.tag.name}
+                          </span>
+                        )}
+                      </div>
 
                       {comment.replies.length > 0 && (
                         <div className="mt-3 pl-3 border-l-2 space-y-2">
@@ -1877,33 +2086,37 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                                       {new Date(reply.createdAt).toLocaleDateString()}
                                     </span>
                                   </div>
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-5 w-5 opacity-0 group-hover/reply:opacity-100 shrink-0"
-                                      >
-                                        <MoreVertical className="h-3 w-3" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem onClick={() => {
-                                        setEditingCommentId(reply.id);
-                                        setEditText(reply.content || '');
-                                      }}>
-                                        <Pencil className="h-4 w-4 mr-2" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        className="text-destructive"
-                                        onClick={() => handleDeleteComment(reply.id)}
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
+                                  {(reply.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-5 w-5 opacity-0 group-hover/reply:opacity-100 shrink-0"
+                                        >
+                                          <MoreVertical className="h-3 w-3" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        {reply.author?.id === currentUserId && (
+                                          <DropdownMenuItem onClick={() => {
+                                            setEditingCommentId(reply.id);
+                                            setEditText(reply.content || '');
+                                          }}>
+                                            <Pencil className="h-4 w-4 mr-2" />
+                                            Edit
+                                          </DropdownMenuItem>
+                                        )}
+                                        <DropdownMenuItem
+                                          className="text-destructive"
+                                          onClick={() => handleDeleteComment(reply.id)}
+                                        >
+                                          <Trash2 className="h-4 w-4 mr-2" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  )}
                                 </div>
                                 {isEditingReply ? (
                                   <div className="mb-1">

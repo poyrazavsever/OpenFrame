@@ -164,6 +164,8 @@ export function VideoCard({ video, projectId }: VideoCardProps) {
       });
       if (res.ok) {
         setShowDeleteDialog(false);
+        // Give revalidatePath time to invalidate cache before refreshing
+        await new Promise((r) => setTimeout(r, 300));
         router.refresh();
       }
     } catch (err) {

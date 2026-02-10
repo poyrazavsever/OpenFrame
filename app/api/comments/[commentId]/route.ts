@@ -142,10 +142,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         }
 
         const body = await request.json();
-        const { content, isResolved } = body;
+        const { content, isResolved, tagId } = body;
 
-        // Only author can edit content
-        if (content !== undefined && !isAuthor) {
+        // Only author can edit content or tag
+        if ((content !== undefined || tagId !== undefined) && !isAuthor) {
             return apiErrors.forbidden('Only the author can edit comment content');
         }
 
@@ -156,6 +156,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
         const updateData: Record<string, unknown> = {};
         if (content !== undefined) updateData.content = content.trim();
+        if (tagId !== undefined) updateData.tagId = tagId;
         if (isResolved !== undefined) {
             updateData.isResolved = isResolved;
             updateData.resolvedAt = isResolved ? new Date() : null;
@@ -166,9 +167,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             data: updateData,
             include: {
                 author: { select: { id: true, name: true, image: true } },
+                tag: { select: { id: true, name: true, color: true } },
                 replies: {
                     include: {
                         author: { select: { id: true, name: true, image: true } },
+                        tag: { select: { id: true, name: true, color: true } },
                     },
                 },
             },
@@ -199,15 +202,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             where: { id: commentId },
             include: {
                 replies: { select: { voiceUrl: true } },
-                version: {
-                    include: {
-                        video: {
-                            include: {
-                                project: true,
-                            },
-                        },
-                    },
-                },
             },
         });
 
@@ -215,30 +209,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Comment');
         }
 
-        const project = comment.version.video.project;
-        const isOwner = project.ownerId === session.user.id;
         const isAuthor = comment.authorId === session.user.id;
 
-        // Check workspace membership for delete permissions
-        let isWorkspaceMember = false;
-        if (!isOwner && !isAuthor && session.user.id) {
-            const wsMember = await db.workspaceMember.findUnique({
-                where: {
-                    workspaceId_userId: {
-                        workspaceId: project.workspaceId,
-                        userId: session.user.id,
-                    },
-                },
-            });
-            const wsOwner = await db.workspace.findUnique({
-                where: { id: project.workspaceId },
-                select: { ownerId: true },
-            });
-            isWorkspaceMember = !!wsMember || wsOwner?.ownerId === session.user.id;
-        }
-
-        if (!isOwner && !isAuthor && !isWorkspaceMember) {
-            return apiErrors.forbidden('Only the author or project owner can delete this comment');
+        if (!isAuthor) {
+            return apiErrors.forbidden('You can only delete your own comments');
         }
 
         // Collect all voice URLs to delete from R2 (comment + its replies)

@@ -57,6 +57,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const response = successResponse({
             ...video,
             isAuthenticated: !!session?.user?.id,
+            currentUserId: session?.user?.id || null,
         });
 
         return withCacheControl(response, 'private, no-cache');

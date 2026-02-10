@@ -61,6 +61,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 visibility: project.visibility,
             },
             isAuthenticated: !!session?.user?.id,
+            currentUserId: session?.user?.id || null,
             canComment: access.hasAccess,
         });
 
