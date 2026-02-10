@@ -1370,7 +1370,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     }
   };
 
-  const containerHeight = mode === 'dashboard' ? 'h-[calc(100vh-3.5rem)]' : 'h-screen';
+  const containerHeight = 'h-screen';
   const backHref = mode === 'dashboard'
     ? `/projects/${propProjectId}`
     : (video?.projectId ? `/projects/${video.projectId}` : '/');

@@ -4,13 +4,13 @@ import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
-import { 
-  Video, 
-  FolderOpen, 
+import {
+  Video,
+  FolderOpen,
   Building2,
-  Plus, 
-  Settings, 
-  LogOut, 
+  Plus,
+  Settings,
+  LogOut,
   User,
   Menu,
   Keyboard
@@ -55,6 +55,10 @@ interface HeaderProps {
 export function Header({ user }: HeaderProps) {
   const pathname = usePathname();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  // Hide header on video player pages — they use full viewport with their own back button
+  const isVideoPage = /\/videos\/[^/]+$/.test(pathname) || pathname.startsWith('/watch/');
+  if (isVideoPage) return null;
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -121,7 +125,7 @@ export function Header({ user }: HeaderProps) {
               New Project
             </Link>
           </Button>
-          
+
           <Button asChild size="icon" variant="ghost" className="sm:hidden">
             <Link href="/projects/new">
               <Plus className="h-5 w-5" />
