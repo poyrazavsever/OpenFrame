@@ -126,10 +126,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
         const body = await request.json();
         const { title, description, position } = body;
-
+        
+        // Validate types before using string methods to prevent type confusion attacks
         const updateData: Record<string, unknown> = {};
-        if (title !== undefined) updateData.title = title.trim();
-        if (description !== undefined) updateData.description = description?.trim() || null;
+        if (typeof title === 'string') updateData.title = title.trim();
+        if (typeof description === 'string') updateData.description = description.trim() || null;
         if (position !== undefined) updateData.position = position;
 
         const updatedVideo = await db.video.update({
