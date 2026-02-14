@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { apiErrors, successResponse } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ videoId: string }> };
@@ -20,6 +20,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const video = await db.video.findUnique({
             where: { id: videoId },
             include: {
+                project: true,
                 versions: {
                     where: { isActive: true },
                     take: 1,
@@ -29,6 +30,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
         if (!video) {
             return apiErrors.notFound('Video');
+        }
+
+        // Check access including workspace membership
+        const access = await checkProjectAccess(video.project, session?.user?.id);
+
+        if (!access.hasAccess) {
+            return apiErrors.forbidden('Access denied');
         }
 
         const activeVersion = video.versions[0];
@@ -82,6 +90,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             const video = await db.video.findUnique({
                 where: { id: videoId },
                 include: {
+                    project: true,
                     versions: {
                         where: { isActive: true },
                         take: 1,
@@ -91,6 +100,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
             if (!video) {
                 return apiErrors.notFound('Video');
+            }
+
+            // Check access including workspace membership
+            const access = await checkProjectAccess(video.project, session?.user?.id);
+
+            if (!access.hasAccess) {
+                return apiErrors.forbidden('Access denied');
             }
 
             const activeVersion = video.versions[0];
