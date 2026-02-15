@@ -902,7 +902,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             ...prev,
             versions: prev.versions.map((v) =>
               v.id === activeVersionId
-                ? { ...v, comments: v.comments.map(c => c.id === tempId ? { ...newComment, replies: newComment.replies || [] } : c) }
+                ? { ...v, comments: v.comments.map(c => c.id === tempId ? { ...newComment, replies: newComment.replies || [] } : { ...c, replies: c.replies || [] }) }
                 : v
             ),
           };
@@ -1263,8 +1263,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                   ...v,
                   comments: v.comments.map((c) =>
                     c.id === parentId
-                      ? { ...c, replies: c.replies.map(r => r.id === tempId ? newReply : r) }
-                      : c
+                      ? { ...c, replies: (c.replies || []).map(r => r.id === tempId ? newReply : r) }
+                      : { ...c, replies: c.replies || [] }
                   ),
                 }
                 : v
@@ -1411,7 +1411,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                     if (c.id === commentId) return { ...c, content: editText.trim(), tag: editTagId !== undefined ? editedTag : c.tag };
                     return {
                       ...c,
-                      replies: c.replies.map((r) =>
+                      replies: (c.replies || []).map((r) =>
                         r.id === commentId ? { ...r, content: editText.trim() } : r
                       ),
                     };
