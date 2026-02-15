@@ -1,7 +1,6 @@
 // Video Provider Registry - Central place to manage all video providers
 
 import { youtubeProvider } from './youtube';
-import { vimeoProvider } from './vimeo';
 import { directProvider } from './direct';
 import type { VideoProvider, VideoSource, VideoMetadata, VideoProviderType } from './types';
 
@@ -11,7 +10,6 @@ export * from './types';
 // Registry of all available providers
 const providers: VideoProvider[] = [
   youtubeProvider,
-  vimeoProvider,
   directProvider,
 ];
 

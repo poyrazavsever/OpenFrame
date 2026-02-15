@@ -358,9 +358,6 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     if (activeVersion.providerId === 'youtube') {
       return `https://www.youtube.com/embed/${activeVersion.videoId}?enablejsapi=1&rel=0&modestbranding=1&controls=0&showinfo=0&iv_load_policy=3&disablekb=1`;
     }
-    if (activeVersion.providerId === 'vimeo') {
-      return `https://player.vimeo.com/video/${activeVersion.videoId}`;
-    }
     try {
       const url = new URL(activeVersion.originalUrl);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {

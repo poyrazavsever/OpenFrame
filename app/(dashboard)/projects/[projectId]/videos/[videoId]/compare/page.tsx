@@ -51,9 +51,6 @@ function getEmbedUrl(version: Version) {
   if (version.providerId === 'youtube') {
     return `https://www.youtube.com/embed/${version.videoId}?enablejsapi=1&rel=0&modestbranding=1`;
   }
-  if (version.providerId === 'vimeo') {
-    return `https://player.vimeo.com/video/${version.videoId}`;
-  }
   return version.originalUrl;
 }
 
