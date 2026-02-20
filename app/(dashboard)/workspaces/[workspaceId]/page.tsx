@@ -98,13 +98,13 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
         </Link>
       </div>
 
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{workspace.name}</h1>
           {workspace.description && (
             <p className="text-muted-foreground mt-1">{workspace.description}</p>
           )}
-          <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mt-2 text-sm text-muted-foreground">
             <span className="flex items-center gap-1">
               <FolderOpen className="h-3.5 w-3.5" />
               {workspace._count.projects} projects
@@ -115,22 +115,22 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
           {isAdmin && (
             <>
-              <Button asChild variant="outline" size="sm">
+              <Button asChild variant="outline" size="sm" className="flex-1 sm:flex-none">
                 <Link href={`/workspaces/${workspaceId}/members`}>
                   <Users className="h-4 w-4 mr-2" />
                   Members
                 </Link>
               </Button>
-              <Button asChild variant="outline" size="sm">
+              <Button asChild variant="outline" size="sm" className="flex-1 sm:flex-none">
                 <Link href={`/workspaces/${workspaceId}/settings`}>
                   <Settings className="h-4 w-4 mr-2" />
                   Settings
                 </Link>
               </Button>
-              <Button asChild size="sm">
+              <Button asChild size="sm" className="w-full sm:w-auto">
                 <Link href={`/workspaces/${workspaceId}/projects/new`}>
                   <Plus className="h-4 w-4 mr-2" />
                   New Project

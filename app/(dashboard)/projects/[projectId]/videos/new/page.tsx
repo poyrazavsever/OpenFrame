@@ -224,7 +224,7 @@ export default function NewVideoPage() {
               </p>
             )}
 
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <Button type="submit" disabled={isLoading || !videoSource}>
                 {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Add Video

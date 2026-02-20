@@ -48,14 +48,14 @@ export default async function WorkspacesPage() {
   return (
     <div className="px-6 lg:px-8 py-8 w-full">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Workspaces</h1>
           <p className="text-muted-foreground mt-1">
             Manage your workspaces and their projects
           </p>
         </div>
-        <Button asChild>
+        <Button asChild className="w-full sm:w-auto">
           <Link href="/workspaces/new">
             <Plus className="h-4 w-4 mr-2" />
             New Workspace

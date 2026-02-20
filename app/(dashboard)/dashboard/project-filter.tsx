@@ -82,8 +82,8 @@ export function ProjectFilter({ projects, workspaces }: ProjectFilterProps) {
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
           {workspaces.length > 0 && (
             <Select value={selectedWorkspace} onValueChange={setSelectedWorkspace}>
@@ -101,7 +101,7 @@ export function ProjectFilter({ projects, workspaces }: ProjectFilterProps) {
             </Select>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
             size="sm"

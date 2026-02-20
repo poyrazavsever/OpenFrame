@@ -195,8 +195,8 @@ export default function ProjectMembersPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleInvite} className="flex gap-3 items-end">
-            <div className="flex-1">
+          <form onSubmit={handleInvite} className="flex flex-col sm:flex-row gap-3 sm:items-end">
+            <div className="w-full sm:flex-1">
               <Label htmlFor="email" className="mb-2 block">Email Address</Label>
               <Input
                 id="email"
@@ -208,7 +208,7 @@ export default function ProjectMembersPage() {
                 disabled={isInviting}
               />
             </div>
-            <div className="w-40">
+            <div className="w-full sm:w-40">
               <Label className="mb-2 block">Role</Label>
               <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as 'ADMIN' | 'COMMENTATOR')}>
                 <SelectTrigger className="w-full">
@@ -220,7 +220,7 @@ export default function ProjectMembersPage() {
                 </SelectContent>
               </Select>
             </div>
-            <Button type="submit" disabled={isInviting}>
+            <Button type="submit" disabled={isInviting} className="w-full sm:w-auto">
               {isInviting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -257,7 +257,7 @@ export default function ProjectMembersPage() {
         <CardContent className="space-y-3">
           {/* Owner */}
           {owner && (
-            <div className="flex items-center justify-between p-3 rounded-lg bg-accent/30">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-0 p-3 rounded-lg bg-accent/30">
               <div className="flex items-center gap-3">
                 <Avatar className="h-9 w-9">
                   <AvatarImage src={owner.image ?? undefined} />
@@ -277,7 +277,7 @@ export default function ProjectMembersPage() {
 
           {/* Members */}
           {members.map((member) => (
-            <div key={member.id} className="flex items-center justify-between p-3 rounded-lg border">
+            <div key={member.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-0 p-3 rounded-lg border">
               <div className="flex items-center gap-3">
                 <Avatar className="h-9 w-9">
                   <AvatarImage src={member.user.image ?? undefined} />
@@ -288,12 +288,12 @@ export default function ProjectMembersPage() {
                   <p className="text-xs text-muted-foreground">{member.user.email}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <Select
                   value={member.role}
                   onValueChange={(v) => handleRoleChange(member.id, v)}
                 >
-                  <SelectTrigger className="w-36 h-8">
+                  <SelectTrigger className="w-full sm:w-36 h-8">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

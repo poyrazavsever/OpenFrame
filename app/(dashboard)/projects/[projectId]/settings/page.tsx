@@ -362,7 +362,7 @@ export default function ProjectSettingsPage({ params }: ProjectSettingsPageProps
                             {/* Existing tags */}
                             <div className="space-y-2">
                                 {tags.map((tag) => (
-                                    <div key={tag.id} className="flex items-center gap-2 p-2 rounded-lg border bg-card">
+                                    <div key={tag.id} className="flex flex-wrap items-center gap-2 p-2 rounded-lg border bg-card">
                                         {editingTagId === tag.id ? (
                                             <>
                                                 <input
@@ -417,7 +417,7 @@ export default function ProjectSettingsPage({ params }: ProjectSettingsPageProps
                             </div>
 
                             {/* Add new tag */}
-                            <div className="flex items-center gap-2 pt-2 border-t">
+                            <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
                                 <input
                                     type="color"
                                     value={newTagColor}

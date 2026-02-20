@@ -22,9 +22,6 @@ export default async function HomePage() {
                 <Button asChild variant="ghost">
                   <Link href="/dashboard">Dashboard</Link>
                 </Button>
-                <Button asChild>
-                  <Link href="/projects/new">New Project</Link>
-                </Button>
               </>
             ) : (
               <>

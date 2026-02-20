@@ -54,7 +54,7 @@ function ToggleButton({
           : 'border-border hover:bg-accent/50'
       )}
     >
-      <div>
+      <div className="flex-1 min-w-0 pr-4">
         <span className="text-sm font-medium">{label}</span>
         {description && (
           <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
@@ -62,7 +62,7 @@ function ToggleButton({
       </div>
       <div
         className={cn(
-          'w-10 h-6 rounded-full relative transition-colors',
+          'w-10 h-6 shrink-0 rounded-full relative transition-colors',
           enabled ? 'bg-primary' : 'bg-muted'
         )}
       >

@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Circle,
   ChevronDown,
+  ChevronUp,
   MoreVertical,
   Plus,
   Loader2,
@@ -205,6 +206,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   // Fullscreen state
   const [isFullscreenMode, setIsFullscreenMode] = useState(false);
   const [showComments, setShowComments] = useState(true);
+  const [isMobileCommentsOpen, setIsMobileCommentsOpen] = useState(false);
 
   // YouTube API loading state
   const [isApiLoaded, setIsApiLoaded] = useState(false);
@@ -266,11 +268,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const handleVideoMouseMove = useCallback(() => {
     setCursorIdle(false);
     if (cursorIdleTimerRef.current) clearTimeout(cursorIdleTimerRef.current);
-    
+
     // In fullscreen mode: hide header AND controls when cursor idle for 1s while playing
     // Non-fullscreen: hide only the play overlay (existing behavior)
     const shouldHideControls = isFullscreenMode;
-    
+
     if (isPlaying || shouldHideControls) {
       cursorIdleTimerRef.current = setTimeout(() => {
         setCursorIdle(true);
@@ -392,18 +394,18 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   useEffect(() => {
     // Already loaded
     if (isApiLoaded) return;
-    
+
     // Already in progress
     if (window.YT) {
       setIsApiLoaded(true);
       return;
     }
-    
+
     const tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
     const firstScriptTag = document.getElementsByTagName('script')[0];
     firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
-    
+
     window.onYouTubeIframeAPIReady = () => {
       setIsApiLoaded(true);
     };
@@ -435,13 +437,13 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           },
           onStateChange: (event: YT.OnStateChangeEvent) => {
             setIsPlaying(event.data === YT.PlayerState.PLAYING);
-            
+
             // Save progress immediately when video is paused
             if (event.data === YT.PlayerState.PAUSED) {
               // Get current time and duration directly from player instance, not from React state (which may be stale)
               const playerCurrentTime = playerRef.current?.getCurrentTime?.() || 0;
               const playerDuration = playerRef.current?.getDuration?.() || 0;
-              
+
               if (video?.isAuthenticated && playerCurrentTime > 0 && activeVersionId) {
                 fetch(`/api/watch/${videoId}/progress`, {
                   method: 'POST',
@@ -454,7 +456,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                 }).catch((err) => console.error('Error saving watch progress on pause:', err));
               }
             }
-            
+
             if (event.data === YT.PlayerState.PLAYING) {
               const dur = event.target.getDuration();
               if (dur > 0) setVideoDuration(dur);
@@ -518,7 +520,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         const response = await res.json();
         const progress = response.data?.progress || 0;
         const percentage = response.data?.percentage || 0;
-        
+
         // Only show resume prompt if progress is between 5% and 95%
         if (showPrompt && percentage > 5 && percentage < 95) {
           setSavedProgress(progress);
@@ -540,7 +542,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     if (lastPathnameRef.current !== pathname) {
       const previousPath = lastPathnameRef.current;
       lastPathnameRef.current = pathname;
-      
+
       // If we navigated away and came back to this video page, refetch progress
       if (previousPath !== pathname) {
         setProgressFetchKey(k => k + 1);
@@ -556,7 +558,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     progressSaveTimerRef.current = setInterval(() => {
       const playerCurrentTime = playerRef.current?.getCurrentTime?.() || 0;
       const playerDuration = playerRef.current?.getDuration?.() || 0;
-      
+
       if (playerCurrentTime > 0 && Math.abs(playerCurrentTime - lastSavedProgressRef.current) >= 2) {
         // Save to API - use player duration directly
         fetch(`/api/watch/${videoId}/progress`, {
@@ -568,7 +570,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             versionId: activeVersionId,
           }),
         }).catch((err) => console.error('Error saving watch progress:', err));
-        
+
         lastSavedProgressRef.current = playerCurrentTime;
       }
     }, 5000);
@@ -622,7 +624,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       // Get current time and duration directly from player instance
       const playerCurrentTime = playerRef.current?.getCurrentTime?.() || currentTime;
       const playerDuration = playerRef.current?.getDuration?.() || videoDuration;
-      
+
       if (playerCurrentTime > 0 && navigator.sendBeacon) {
         // Use sendBeacon for reliable save on page unload
         const data = new Blob([JSON.stringify({
@@ -639,7 +641,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       // Get current time and duration directly from player instance
       const playerCurrentTime = playerRef.current?.getCurrentTime?.() || 0;
       const playerDuration = playerRef.current?.getDuration?.() || videoDuration;
-      
+
       if (document.visibilityState === 'hidden' && playerCurrentTime > 0 && activeVersionId) {
         fetch(`/api/watch/${videoId}/progress`, {
           method: 'POST',
@@ -1670,8 +1672,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     return (
       <div className={cn(containerHeight, 'flex flex-col bg-background overflow-hidden')}>
         <div className="flex-1 flex overflow-hidden min-h-0">
-        <div className={cn("flex-1 flex flex-col overflow-hidden min-h-0", isFullscreenMode && "relative")}>
-          <div className={cn("shrink-0 flex items-center justify-between h-12 px-4 border-b bg-background/50", isFullscreenMode && cursorIdle && isPlaying && "opacity-0 pointer-events-none transition-opacity duration-300")}>
+          <div className={cn("flex-1 flex flex-col overflow-hidden min-h-0", isFullscreenMode && "relative")}>
+            <div className={cn("shrink-0 flex items-center justify-between h-12 px-4 border-b bg-background/50", isFullscreenMode && cursorIdle && isPlaying && "opacity-0 pointer-events-none transition-opacity duration-300")}>
               <div className="flex items-center gap-3">
                 <Skeleton className="h-4 w-12" />
                 <Separator orientation="vertical" className="h-5" />
@@ -1686,7 +1688,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
               </div>
             </div>
             <div className="flex-1 bg-black min-h-0" />
-          <div className={cn("shrink-0 px-4 py-2 bg-background border-t", isFullscreenMode && cursorIdle && isPlaying && "opacity-0 pointer-events-none transition-opacity duration-300")}>
+            <div className={cn("shrink-0 px-4 py-2 bg-background border-t", isFullscreenMode && cursorIdle && isPlaying && "opacity-0 pointer-events-none transition-opacity duration-300")}>
               <div className="flex items-center gap-1 mb-2">
                 <Skeleton className="h-8 w-8 rounded-md" />
                 <Skeleton className="h-8 w-8 rounded-md" />
@@ -1807,8 +1809,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       onMouseUp={handleTimelineMouseUp}
       onMouseLeave={() => isDragging && handleTimelineMouseUp()}
     >
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        <div className={cn("flex-1 flex flex-col overflow-hidden min-h-0", isFullscreenMode && "relative")}>
+      <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden min-h-0">
+        <div className={cn("flex-none lg:flex-1 w-full aspect-video lg:aspect-auto flex flex-col min-h-0", isFullscreenMode && "relative")}>
           <div className={cn(
             "shrink-0 flex items-center justify-between h-12 px-4 border-b bg-background/50",
             isFullscreenMode ? "absolute top-0 left-0 right-0 z-50 transition-opacity duration-300" : "",
@@ -2181,16 +2183,25 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           </div>
         </div>
 
-        <div className={cn("w-80 shrink-0 border-l bg-card flex flex-col overflow-hidden", isFullscreenMode && !showComments && "hidden")}>
-          <div className="shrink-0 flex items-center justify-between p-4 border-b">
+        <div className={cn("w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l bg-card flex flex-col overflow-hidden transition-[height] duration-300",
+          isFullscreenMode && !showComments ? "hidden" : "",
+          isMobileCommentsOpen ? "h-[500px] lg:h-auto" : "h-[60px] lg:h-auto"
+        )}>
+          <div
+            className="shrink-0 flex items-center justify-between p-4 border-b cursor-pointer lg:cursor-default"
+            onClick={() => setIsMobileCommentsOpen(!isMobileCommentsOpen)}
+          >
             <div className="flex items-center gap-2">
               <MessageSquare className="h-5 w-5" />
               <span className="font-medium">Comments</span>
               <Badge variant="secondary">{comments.length}</Badge>
             </div>
-            <Button variant="ghost" size="sm" onClick={handleToggleShowResolved}>
-              {showResolved ? 'Hide' : 'Show'} Resolved
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleToggleShowResolved(); }}>
+                {showResolved ? 'Hide' : 'Show'} Resolved
+              </Button>
+              <ChevronUp className={cn("h-4 w-4 transition-transform lg:hidden", isMobileCommentsOpen && "rotate-180")} />
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -2202,496 +2213,496 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
               </div>
             ) : (
               sortedComments.map((comment) => {
-                  const authorName =
-                    comment.author?.name || comment.guestName || 'Anonymous';
-                  const isEditing = editingCommentId === comment.id;
-                  const isReplying = replyingTo === comment.id;
-                  return (
-                    <div
-                      key={comment.id}
-                      className={cn(
-                        'group rounded-lg border p-3 transition-colors hover:bg-accent/50',
-                        comment.isResolved && 'opacity-60'
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Avatar className="h-6 w-6 shrink-0">
-                            <AvatarImage src={comment.author?.image ?? undefined} />
-                            <AvatarFallback className="text-xs">
-                              {authorName.charAt(0)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="text-sm font-medium truncate">{authorName}</span>
-                        </div>
+                const authorName =
+                  comment.author?.name || comment.guestName || 'Anonymous';
+                const isEditing = editingCommentId === comment.id;
+                const isReplying = replyingTo === comment.id;
+                return (
+                  <div
+                    key={comment.id}
+                    className={cn(
+                      'group rounded-lg border p-3 transition-colors hover:bg-accent/50',
+                      comment.isResolved && 'opacity-60'
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Avatar className="h-6 w-6 shrink-0">
+                          <AvatarImage src={comment.author?.image ?? undefined} />
+                          <AvatarFallback className="text-xs">
+                            {authorName.charAt(0)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="text-sm font-medium truncate">{authorName}</span>
+                      </div>
 
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => handleSeekToTimestamp(comment.timestamp)}
-                            className="flex items-center gap-1 text-xs text-primary hover:underline px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
-                            title="Jump to this timestamp"
-                          >
-                            <Clock className="h-3 w-3" />
-                            {formatTime(comment.timestamp)}
-                            <ArrowUpRight className="h-3 w-3" />
-                          </button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() =>
-                              handleResolveComment(comment.id, comment.isResolved)
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => handleSeekToTimestamp(comment.timestamp)}
+                          className="flex items-center gap-1 text-xs text-primary hover:underline px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
+                          title="Jump to this timestamp"
+                        >
+                          <Clock className="h-3 w-3" />
+                          {formatTime(comment.timestamp)}
+                          <ArrowUpRight className="h-3 w-3" />
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() =>
+                            handleResolveComment(comment.id, comment.isResolved)
+                          }
+                        >
+                          {comment.isResolved ? (
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <Circle className="h-4 w-4" />
+                          )}
+                        </Button>
+                        {(comment.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => {
+                                setReplyingTo(comment.id);
+                                setReplyText('');
+                              }}>
+                                <Reply className="h-4 w-4 mr-2" />
+                                Reply
+                              </DropdownMenuItem>
+                              {comment.author?.id === currentUserId && (
+                                <DropdownMenuItem onClick={() => {
+                                  setEditingCommentId(comment.id);
+                                  setEditText(comment.content || '');
+                                  setEditTagId(comment.tag?.id || null);
+                                }}>
+                                  <Pencil className="h-4 w-4 mr-2" />
+                                  Edit
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => handleDeleteComment(comment.id)}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    </div>
+
+                    {isEditing ? (
+                      <div className="mb-2">
+                        <Textarea
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          rows={2}
+                          className="resize-none text-sm mb-1"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                              handleEditComment(comment.id);
                             }
+                            if (e.key === 'Escape') {
+                              setEditingCommentId(null);
+                              setEditText('');
+                              setEditTagId(null);
+                            }
+                          }}
+                        />
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            onClick={() => handleEditComment(comment.id)}
+                            disabled={!editText.trim() || isSubmittingEdit}
+                            className="h-7 text-xs"
                           >
-                            {comment.isResolved ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <Circle className="h-4 w-4" />
-                            )}
+                            {isSubmittingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
                           </Button>
-                          {(comment.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => { setEditingCommentId(null); setEditText(''); setEditTagId(null); }}
+                            className="h-7 text-xs"
+                          >
+                            Cancel
+                          </Button>
+                          {availableTags.length > 0 && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                                  size="sm"
+                                  variant={editTagId ? 'default' : 'outline'}
+                                  className="h-7 text-xs ml-auto"
+                                  style={editTagId ? {
+                                    backgroundColor: availableTags.find(t => t.id === editTagId)?.color
+                                  } : undefined}
                                 >
-                                  <MoreVertical className="h-4 w-4" />
+                                  <Tag className="h-3 w-3 mr-1" />
+                                  {editTagId ? availableTags.find(t => t.id === editTagId)?.name || 'Tag' : 'Tag'}
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => {
-                                  setReplyingTo(comment.id);
-                                  setReplyText('');
-                                }}>
-                                  <Reply className="h-4 w-4 mr-2" />
-                                  Reply
+                                <DropdownMenuItem onClick={() => setEditTagId(null)} className="gap-2">
+                                  <X className="h-3 w-3" />
+                                  No Tag
+                                  {!editTagId && <span className="ml-auto">✓</span>}
                                 </DropdownMenuItem>
-                                {comment.author?.id === currentUserId && (
-                                  <DropdownMenuItem onClick={() => {
-                                    setEditingCommentId(comment.id);
-                                    setEditText(comment.content || '');
-                                    setEditTagId(comment.tag?.id || null);
-                                  }}>
-                                    <Pencil className="h-4 w-4 mr-2" />
-                                    Edit
+                                <DropdownMenuSeparator />
+                                {availableTags.map((tag) => (
+                                  <DropdownMenuItem
+                                    key={tag.id}
+                                    onClick={() => setEditTagId(tag.id)}
+                                    className="gap-2"
+                                  >
+                                    <span
+                                      className="w-3 h-3 rounded-full shrink-0"
+                                      style={{ backgroundColor: tag.color }}
+                                    />
+                                    {tag.name}
+                                    {editTagId === tag.id && <span className="ml-auto">✓</span>}
                                   </DropdownMenuItem>
-                                )}
-                                <DropdownMenuItem
-                                  className="text-destructive"
-                                  onClick={() => handleDeleteComment(comment.id)}
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete
-                                </DropdownMenuItem>
+                                ))}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           )}
                         </div>
                       </div>
+                    ) : (
+                      comment.content && <p className="text-sm mb-2">{comment.content}</p>
+                    )}
 
-                      {isEditing ? (
-                        <div className="mb-2">
-                          <Textarea
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            rows={2}
-                            className="resize-none text-sm mb-1"
-                            autoFocus
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                                handleEditComment(comment.id);
-                              }
-                              if (e.key === 'Escape') {
-                                setEditingCommentId(null);
-                                setEditText('');
-                                setEditTagId(null);
-                              }
-                            }}
-                          />
-                          <div className="flex items-center gap-1">
-                            <Button
-                              size="sm"
-                              onClick={() => handleEditComment(comment.id)}
-                              disabled={!editText.trim() || isSubmittingEdit}
-                              className="h-7 text-xs"
-                            >
-                              {isSubmittingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => { setEditingCommentId(null); setEditText(''); setEditTagId(null); }}
-                              className="h-7 text-xs"
-                            >
-                              Cancel
-                            </Button>
-                            {availableTags.length > 0 && (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    size="sm"
-                                    variant={editTagId ? 'default' : 'outline'}
-                                    className="h-7 text-xs ml-auto"
-                                    style={editTagId ? {
-                                      backgroundColor: availableTags.find(t => t.id === editTagId)?.color
-                                    } : undefined}
-                                  >
-                                    <Tag className="h-3 w-3 mr-1" />
-                                    {editTagId ? availableTags.find(t => t.id === editTagId)?.name || 'Tag' : 'Tag'}
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => setEditTagId(null)} className="gap-2">
-                                    <X className="h-3 w-3" />
-                                    No Tag
-                                    {!editTagId && <span className="ml-auto">✓</span>}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  {availableTags.map((tag) => (
-                                    <DropdownMenuItem
-                                      key={tag.id}
-                                      onClick={() => setEditTagId(tag.id)}
-                                      className="gap-2"
-                                    >
-                                      <span
-                                        className="w-3 h-3 rounded-full shrink-0"
-                                        style={{ backgroundColor: tag.color }}
-                                      />
-                                      {tag.name}
-                                      {editTagId === tag.id && <span className="ml-auto">✓</span>}
-                                    </DropdownMenuItem>
-                                  ))}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        comment.content && <p className="text-sm mb-2">{comment.content}</p>
-                      )}
-
-                      {comment.voiceUrl && (
-                        <div className="flex items-center gap-2 p-2 bg-muted rounded mb-2">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 shrink-0"
-                            onClick={() => playVoice(comment.id, comment.voiceUrl!, comment.voiceDuration || 0)}
-                          >
-                            {playingVoiceId === comment.id ? (
-                              <Pause className="h-4 w-4" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                          </Button>
-                          <div className="flex-1 h-2 bg-primary/20 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-primary rounded-full"
-                              style={{ width: playingVoiceId === comment.id ? `${voiceProgress}%` : '0%' }}
-                            />
-                          </div>
-                          <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                            {playingVoiceId === comment.id
-                              ? `${formatTime(voiceCurrentTime)} / ${formatTime(comment.voiceDuration || 0)}`
-                              : formatTime(comment.voiceDuration || 0)}
-                          </span>
-                          {playingVoiceId === comment.id && (
-                            <button
-                              onClick={toggleVoiceSpeed}
-                              className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
-                            >
-                              {voicePlaybackRate}x
-                            </button>
+                    {comment.voiceUrl && (
+                      <div className="flex items-center gap-2 p-2 bg-muted rounded mb-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 shrink-0"
+                          onClick={() => playVoice(comment.id, comment.voiceUrl!, comment.voiceDuration || 0)}
+                        >
+                          {playingVoiceId === comment.id ? (
+                            <Pause className="h-4 w-4" />
+                          ) : (
+                            <Play className="h-4 w-4" />
                           )}
+                        </Button>
+                        <div className="flex-1 h-2 bg-primary/20 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary rounded-full"
+                            style={{ width: playingVoiceId === comment.id ? `${voiceProgress}%` : '0%' }}
+                          />
                         </div>
-                      )}
-
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(comment.createdAt).toLocaleDateString()}
-                        </p>
-                        {comment.tag && (
-                          <span
-                            className="text-[10px] font-medium px-2 py-0.5 rounded-full text-white shrink-0"
-                            style={{ backgroundColor: comment.tag.color }}
+                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                          {playingVoiceId === comment.id
+                            ? `${formatTime(voiceCurrentTime)} / ${formatTime(comment.voiceDuration || 0)}`
+                            : formatTime(comment.voiceDuration || 0)}
+                        </span>
+                        {playingVoiceId === comment.id && (
+                          <button
+                            onClick={toggleVoiceSpeed}
+                            className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
                           >
-                            {comment.tag.name}
-                          </span>
+                            {voicePlaybackRate}x
+                          </button>
                         )}
                       </div>
+                    )}
 
-                      {comment.replies && comment.replies.length > 0 && (
-                        <div className="mt-3 pl-3 border-l-2 space-y-2">
-                          {comment.replies.map((reply) => {
-                            const replyAuthor =
-                              reply.author?.name || reply.guestName || 'Anonymous';
-                            const isEditingReply = editingCommentId === reply.id;
-                            return (
-                              <div key={reply.id} className="group/reply text-sm">
-                                <div className="flex items-center justify-between gap-2 mb-1">
-                                  <div className="flex items-center gap-2">
-                                    <Avatar className="h-5 w-5">
-                                      <AvatarFallback className="text-xs">
-                                        {replyAuthor.charAt(0)}
-                                      </AvatarFallback>
-                                    </Avatar>
-                                    <span className="font-medium text-xs">{replyAuthor}</span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {new Date(reply.createdAt).toLocaleDateString()}
-                                    </span>
-                                  </div>
-                                  {(reply.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
-                                    <DropdownMenu>
-                                      <DropdownMenuTrigger asChild>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-5 w-5 opacity-0 group-hover/reply:opacity-100 shrink-0"
-                                        >
-                                          <MoreVertical className="h-3 w-3" />
-                                        </Button>
-                                      </DropdownMenuTrigger>
-                                      <DropdownMenuContent align="end">
-                                        {reply.author?.id === currentUserId && (
-                                          <DropdownMenuItem onClick={() => {
-                                            setEditingCommentId(reply.id);
-                                            setEditText(reply.content || '');
-                                          }}>
-                                            <Pencil className="h-4 w-4 mr-2" />
-                                            Edit
-                                          </DropdownMenuItem>
-                                        )}
-                                        <DropdownMenuItem
-                                          className="text-destructive"
-                                          onClick={() => handleDeleteComment(reply.id)}
-                                        >
-                                          <Trash2 className="h-4 w-4 mr-2" />
-                                          Delete
-                                        </DropdownMenuItem>
-                                      </DropdownMenuContent>
-                                    </DropdownMenu>
-                                  )}
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(comment.createdAt).toLocaleDateString()}
+                      </p>
+                      {comment.tag && (
+                        <span
+                          className="text-[10px] font-medium px-2 py-0.5 rounded-full text-white shrink-0"
+                          style={{ backgroundColor: comment.tag.color }}
+                        >
+                          {comment.tag.name}
+                        </span>
+                      )}
+                    </div>
+
+                    {comment.replies && comment.replies.length > 0 && (
+                      <div className="mt-3 pl-3 border-l-2 space-y-2">
+                        {comment.replies.map((reply) => {
+                          const replyAuthor =
+                            reply.author?.name || reply.guestName || 'Anonymous';
+                          const isEditingReply = editingCommentId === reply.id;
+                          return (
+                            <div key={reply.id} className="group/reply text-sm">
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <div className="flex items-center gap-2">
+                                  <Avatar className="h-5 w-5">
+                                    <AvatarFallback className="text-xs">
+                                      {replyAuthor.charAt(0)}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <span className="font-medium text-xs">{replyAuthor}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {new Date(reply.createdAt).toLocaleDateString()}
+                                  </span>
                                 </div>
-                                {isEditingReply ? (
-                                  <div className="mb-1">
-                                    <Textarea
-                                      value={editText}
-                                      onChange={(e) => setEditText(e.target.value)}
-                                      rows={2}
-                                      className="resize-none text-sm mb-1"
-                                      autoFocus
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                                          handleEditComment(reply.id);
-                                        }
-                                        if (e.key === 'Escape') {
-                                          setEditingCommentId(null);
-                                          setEditText('');
-                                        }
-                                      }}
-                                    />
-                                    <div className="flex gap-1">
+                                {(reply.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
                                       <Button
-                                        size="sm"
-                                        onClick={() => handleEditComment(reply.id)}
-                                        disabled={!editText.trim() || isSubmittingEdit}
-                                        className="h-7 text-xs"
-                                      >
-                                        {isSubmittingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
-                                      </Button>
-                                      <Button
-                                        size="sm"
                                         variant="ghost"
-                                        onClick={() => { setEditingCommentId(null); setEditText(''); }}
-                                        className="h-7 text-xs"
+                                        size="icon"
+                                        className="h-5 w-5 opacity-0 group-hover/reply:opacity-100 shrink-0"
                                       >
-                                        Cancel
+                                        <MoreVertical className="h-3 w-3" />
                                       </Button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  reply.content && <p className="text-sm">{reply.content}</p>
-                                )}
-                                {reply.voiceUrl && (
-                                  <div className="flex items-center gap-2 p-1.5 bg-muted rounded mt-1">
-                                    <Button
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-6 w-6 shrink-0"
-                                      onClick={() => playVoice(reply.id, reply.voiceUrl!, reply.voiceDuration || 0)}
-                                    >
-                                      {playingVoiceId === reply.id ? (
-                                        <Pause className="h-3 w-3" />
-                                      ) : (
-                                        <Play className="h-3 w-3" />
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      {reply.author?.id === currentUserId && (
+                                        <DropdownMenuItem onClick={() => {
+                                          setEditingCommentId(reply.id);
+                                          setEditText(reply.content || '');
+                                        }}>
+                                          <Pencil className="h-4 w-4 mr-2" />
+                                          Edit
+                                        </DropdownMenuItem>
                                       )}
-                                    </Button>
-                                    <div className="flex-1 h-1.5 bg-primary/20 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-primary rounded-full"
-                                        style={{ width: playingVoiceId === reply.id ? `${voiceProgress}%` : '0%' }}
-                                      />
-                                    </div>
-                                    <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                                      {playingVoiceId === reply.id
-                                        ? `${formatTime(voiceCurrentTime)} / ${formatTime(reply.voiceDuration || 0)}`
-                                        : formatTime(reply.voiceDuration || 0)}
-                                    </span>
-                                    {playingVoiceId === reply.id && (
-                                      <button
-                                        onClick={toggleVoiceSpeed}
-                                        className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                                      <DropdownMenuItem
+                                        className="text-destructive"
+                                        onClick={() => handleDeleteComment(reply.id)}
                                       >
-                                        {voicePlaybackRate}x
-                                      </button>
-                                    )}
-                                  </div>
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 )}
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                              {isEditingReply ? (
+                                <div className="mb-1">
+                                  <Textarea
+                                    value={editText}
+                                    onChange={(e) => setEditText(e.target.value)}
+                                    rows={2}
+                                    className="resize-none text-sm mb-1"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                        handleEditComment(reply.id);
+                                      }
+                                      if (e.key === 'Escape') {
+                                        setEditingCommentId(null);
+                                        setEditText('');
+                                      }
+                                    }}
+                                  />
+                                  <div className="flex gap-1">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleEditComment(reply.id)}
+                                      disabled={!editText.trim() || isSubmittingEdit}
+                                      className="h-7 text-xs"
+                                    >
+                                      {isSubmittingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => { setEditingCommentId(null); setEditText(''); }}
+                                      className="h-7 text-xs"
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                reply.content && <p className="text-sm">{reply.content}</p>
+                              )}
+                              {reply.voiceUrl && (
+                                <div className="flex items-center gap-2 p-1.5 bg-muted rounded mt-1">
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-6 w-6 shrink-0"
+                                    onClick={() => playVoice(reply.id, reply.voiceUrl!, reply.voiceDuration || 0)}
+                                  >
+                                    {playingVoiceId === reply.id ? (
+                                      <Pause className="h-3 w-3" />
+                                    ) : (
+                                      <Play className="h-3 w-3" />
+                                    )}
+                                  </Button>
+                                  <div className="flex-1 h-1.5 bg-primary/20 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-primary rounded-full"
+                                      style={{ width: playingVoiceId === reply.id ? `${voiceProgress}%` : '0%' }}
+                                    />
+                                  </div>
+                                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                                    {playingVoiceId === reply.id
+                                      ? `${formatTime(voiceCurrentTime)} / ${formatTime(reply.voiceDuration || 0)}`
+                                      : formatTime(reply.voiceDuration || 0)}
+                                  </span>
+                                  {playingVoiceId === reply.id && (
+                                    <button
+                                      onClick={toggleVoiceSpeed}
+                                      className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                                    >
+                                      {voicePlaybackRate}x
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                      {isReplying && (
-                        <div className="mt-3 pl-3 border-l-2">
-                          {isReplyRecording ? (
-                            <div className="flex items-center gap-2 p-2 bg-destructive/10 border border-destructive/30 rounded-lg mb-1">
-                              <div className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
-                              <span className="text-xs font-medium text-destructive">
-                                {formatTime(replyRecordingTime)}
-                              </span>
-                              <div className="flex-1" />
-                              <Button size="sm" variant="destructive" onClick={stopReplyRecording} className="h-6 text-xs">
-                                Stop
+                    {isReplying && (
+                      <div className="mt-3 pl-3 border-l-2">
+                        {isReplyRecording ? (
+                          <div className="flex items-center gap-2 p-2 bg-destructive/10 border border-destructive/30 rounded-lg mb-1">
+                            <div className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
+                            <span className="text-xs font-medium text-destructive">
+                              {formatTime(replyRecordingTime)}
+                            </span>
+                            <div className="flex-1" />
+                            <Button size="sm" variant="destructive" onClick={stopReplyRecording} className="h-6 text-xs">
+                              Stop
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={cancelReplyRecording} className="h-6 text-xs">
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ) : replyAudioBlob ? (
+                          <div className="space-y-1 mb-1">
+                            <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-6 w-6"
+                                onClick={() => {
+                                  const url = URL.createObjectURL(replyAudioBlob);
+                                  playVoice('reply-preview', url, replyRecordingTime);
+                                }}
+                              >
+                                {playingVoiceId === 'reply-preview' ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
                               </Button>
-                              <Button size="sm" variant="ghost" onClick={cancelReplyRecording} className="h-6 text-xs">
+                              <div className="flex-1 h-1.5 bg-primary/20 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-primary rounded-full"
+                                  style={{ width: playingVoiceId === 'reply-preview' ? `${voiceProgress}%` : '0%' }}
+                                />
+                              </div>
+                              <span className="text-xs text-muted-foreground tabular-nums">
+                                {playingVoiceId === 'reply-preview'
+                                  ? `${formatTime(voiceCurrentTime)} / ${formatTime(replyRecordingTime)}`
+                                  : formatTime(replyRecordingTime)}
+                              </span>
+                              {playingVoiceId === 'reply-preview' && (
+                                <button
+                                  onClick={toggleVoiceSpeed}
+                                  className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                                >
+                                  {voicePlaybackRate}x
+                                </button>
+                              )}
+                              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelReplyRecording}>
                                 <X className="h-3 w-3" />
                               </Button>
                             </div>
-                          ) : replyAudioBlob ? (
-                            <div className="space-y-1 mb-1">
-                              <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-6 w-6"
-                                  onClick={() => {
-                                    const url = URL.createObjectURL(replyAudioBlob);
-                                    playVoice('reply-preview', url, replyRecordingTime);
-                                  }}
-                                >
-                                  {playingVoiceId === 'reply-preview' ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-                                </Button>
-                                <div className="flex-1 h-1.5 bg-primary/20 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full bg-primary rounded-full"
-                                    style={{ width: playingVoiceId === 'reply-preview' ? `${voiceProgress}%` : '0%' }}
-                                  />
-                                </div>
-                                <span className="text-xs text-muted-foreground tabular-nums">
-                                  {playingVoiceId === 'reply-preview'
-                                    ? `${formatTime(voiceCurrentTime)} / ${formatTime(replyRecordingTime)}`
-                                    : formatTime(replyRecordingTime)}
-                                </span>
-                                {playingVoiceId === 'reply-preview' && (
-                                  <button
-                                    onClick={toggleVoiceSpeed}
-                                    className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
-                                  >
-                                    {voicePlaybackRate}x
-                                  </button>
-                                )}
-                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelReplyRecording}>
-                                  <X className="h-3 w-3" />
-                                </Button>
-                              </div>
+                            <Textarea
+                              value={replyText}
+                              onChange={(e) => setReplyText(e.target.value)}
+                              placeholder="Add a note (optional)..."
+                              rows={1}
+                              className="resize-none text-sm"
+                            />
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                onClick={() => submitVoiceReply(comment.id)}
+                                disabled={isUploadingReplyAudio}
+                                className="h-7 text-xs"
+                              >
+                                {isUploadingReplyAudio ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Send Voice Reply'}
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={cancelReplyRecording} className="h-7 text-xs">Cancel</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex gap-1">
                               <Textarea
                                 value={replyText}
                                 onChange={(e) => setReplyText(e.target.value)}
-                                placeholder="Add a note (optional)..."
-                                rows={1}
-                                className="resize-none text-sm"
+                                placeholder="Write a reply..."
+                                rows={2}
+                                className="resize-none text-sm flex-1"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                    handleReplyComment(comment.id);
+                                  }
+                                  if (e.key === 'Escape') {
+                                    setReplyingTo(null);
+                                    setReplyText('');
+                                  }
+                                }}
                               />
-                              <div className="flex gap-1">
-                                <Button
-                                  size="sm"
-                                  onClick={() => submitVoiceReply(comment.id)}
-                                  disabled={isUploadingReplyAudio}
-                                  className="h-7 text-xs"
-                                >
-                                  {isUploadingReplyAudio ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Send Voice Reply'}
-                                </Button>
-                                <Button size="sm" variant="ghost" onClick={cancelReplyRecording} className="h-7 text-xs">Cancel</Button>
-                              </div>
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                onClick={startReplyRecording}
+                                title="Record voice reply"
+                                className="h-8 w-8 shrink-0 self-end"
+                              >
+                                <Mic className="h-3 w-3" />
+                              </Button>
                             </div>
-                          ) : (
-                            <>
-                              <div className="flex gap-1">
-                                <Textarea
-                                  value={replyText}
-                                  onChange={(e) => setReplyText(e.target.value)}
-                                  placeholder="Write a reply..."
-                                  rows={2}
-                                  className="resize-none text-sm flex-1"
-                                  autoFocus
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                                      handleReplyComment(comment.id);
-                                    }
-                                    if (e.key === 'Escape') {
-                                      setReplyingTo(null);
-                                      setReplyText('');
-                                    }
-                                  }}
-                                />
-                                <Button
-                                  size="icon"
-                                  variant="outline"
-                                  onClick={startReplyRecording}
-                                  title="Record voice reply"
-                                  className="h-8 w-8 shrink-0 self-end"
-                                >
-                                  <Mic className="h-3 w-3" />
-                                </Button>
-                              </div>
-                              <div className="flex gap-1 mt-1">
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleReplyComment(comment.id)}
-                                  disabled={!replyText.trim() || isSubmittingReply}
-                                  className="h-7 text-xs"
-                                >
-                                  {isSubmittingReply ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reply'}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => { setReplyingTo(null); setReplyText(''); }}
-                                  className="h-7 text-xs"
-                                >
-                                  Cancel
-                                </Button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )}
+                            <div className="flex gap-1 mt-1">
+                              <Button
+                                size="sm"
+                                onClick={() => handleReplyComment(comment.id)}
+                                disabled={!replyText.trim() || isSubmittingReply}
+                                className="h-7 text-xs"
+                              >
+                                {isSubmittingReply ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reply'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => { setReplyingTo(null); setReplyText(''); }}
+                                className="h-7 text-xs"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
 
-                      {!isReplying && !isEditing && (
-                        <button
-                          onClick={() => { setReplyingTo(comment.id); setReplyText(''); }}
-                          className="mt-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                        >
-                          <Reply className="h-3 w-3" />
-                          Reply
-                        </button>
-                      )}
-                    </div>
-                  );
-                })
+                    {!isReplying && !isEditing && (
+                      <button
+                        onClick={() => { setReplyingTo(comment.id); setReplyText(''); }}
+                        className="mt-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                      >
+                        <Reply className="h-3 w-3" />
+                        Reply
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
 

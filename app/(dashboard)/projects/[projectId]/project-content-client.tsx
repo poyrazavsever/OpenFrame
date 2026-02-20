@@ -11,6 +11,9 @@ import {
   Building2,
   ArrowUp,
   ArrowDown,
+  Globe,
+  UserPlus,
+  Lock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -71,9 +74,9 @@ export function ProjectContentClient({
           <div className="flex items-center gap-2 mb-1">
             <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
             <Badge variant="outline" className="flex items-center gap-1">
-              {project.visibility === 'PUBLIC' && <span className="text-xs">🌐</span>}
-              {project.visibility === 'INVITE' && <span className="text-xs">📧</span>}
-              {project.visibility === 'PRIVATE' && <span className="text-xs">🔒</span>}
+              {project.visibility === 'PUBLIC' && <Globe className="h-3 w-3" />}
+              {project.visibility === 'INVITE' && <UserPlus className="h-3 w-3" />}
+              {project.visibility === 'PRIVATE' && <Lock className="h-3 w-3" />}
               {project.visibility.toLowerCase()}
             </Badge>
           </div>
@@ -92,7 +95,7 @@ export function ProjectContentClient({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 mt-4 sm:mt-0">
           {/* Sort Button - Left of Share */}
           <Button
             variant="outline"
