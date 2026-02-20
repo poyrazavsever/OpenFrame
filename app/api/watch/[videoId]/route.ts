@@ -25,9 +25,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             include: {
                 project: true,
                 versions: {
-                    where: { isActive: true },
                     orderBy: { versionNumber: 'desc' },
-                    take: 1,
                     ...(includeComments ? {
                         include: {
                             comments: {

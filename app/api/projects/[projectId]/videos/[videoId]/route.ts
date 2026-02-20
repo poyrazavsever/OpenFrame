@@ -26,9 +26,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             include: {
                 project: true,
                 versions: {
-                    where: { isActive: true },
                     orderBy: { versionNumber: 'desc' },
-                    take: 1,
                     include: {
                         comments: {
                             orderBy: { timestamp: 'asc' },
@@ -126,7 +124,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
         const body = await request.json();
         const { title, description, position } = body;
-        
+
         // Validate types before using string methods to prevent type confusion attacks
         const updateData: Record<string, unknown> = {};
         if (typeof title === 'string') updateData.title = title.trim();
