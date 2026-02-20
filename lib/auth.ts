@@ -63,6 +63,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (token.sub && session.user) {
         session.user.id = token.sub;
         session.user.name = token.name || null;
+        session.user.isAdmin = token.isAdmin as boolean;
       }
       return session;
     },
@@ -70,7 +71,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (user) {
         token.sub = user.id;
         token.name = user.name;
+        token.email = user.email; // explicitly ensure email is in the token
       }
+
+      // Check if user is admin based on emails list on EVERY request to ensure env changes are picked up
+      if (token.email) {
+        const adminEmails = process.env.ADMIN_EMAILS
+          ? process.env.ADMIN_EMAILS.split(',').map((e: string) => e.trim().toLowerCase())
+          : [];
+        token.isAdmin = adminEmails.includes((token.email as string).toLowerCase());
+      }
+
       return token;
     },
   },
@@ -87,8 +98,8 @@ export async function checkProjectAccess(
   // Get project membership
   const projectMember = userId
     ? await db.projectMember.findUnique({
-        where: { projectId_userId: { projectId: project.id, userId } },
-      })
+      where: { projectId_userId: { projectId: project.id, userId } },
+    })
     : null;
   const isProjectMember = !!projectMember;
   const isProjectAdmin = projectMember?.role === ProjectMemberRole.ADMIN;
@@ -138,8 +149,8 @@ export async function checkWorkspaceAccess(
   // Get workspace membership
   const workspaceMember = userId
     ? await db.workspaceMember.findUnique({
-        where: { workspaceId_userId: { workspaceId: workspace.id, userId } },
-      })
+      where: { workspaceId_userId: { workspaceId: workspace.id, userId } },
+    })
     : null;
   const isMember = !!workspaceMember;
   const isAdmin = workspaceMember?.role === WorkspaceMemberRole.ADMIN;

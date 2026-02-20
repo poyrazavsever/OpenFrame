@@ -13,7 +13,8 @@ import {
   LogOut,
   User,
   Menu,
-  Keyboard
+  Keyboard,
+  LayoutDashboard
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -49,6 +50,7 @@ interface HeaderProps {
     name?: string | null;
     email?: string | null;
     image?: string | null;
+    isAdmin?: boolean;
   } | null;
 }
 
@@ -90,6 +92,20 @@ export function Header({ user }: HeaderProps) {
                   {item.label}
                 </Link>
               ))}
+              {user?.isAdmin && (
+                <Link
+                  href="/admin"
+                  className={cn(
+                    'flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors',
+                    pathname.startsWith('/admin')
+                      ? 'bg-accent text-accent-foreground'
+                      : 'hover:bg-accent hover:text-accent-foreground'
+                  )}
+                >
+                  <LayoutDashboard className="h-4 w-4" />
+                  Admin Panel
+                </Link>
+              )}
             </nav>
           </SheetContent>
         </Sheet>
@@ -117,6 +133,20 @@ export function Header({ user }: HeaderProps) {
               {item.label}
             </Link>
           ))}
+          {user?.isAdmin && (
+            <Link
+              href="/admin"
+              className={cn(
+                'flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors',
+                pathname.startsWith('/admin')
+                  ? 'bg-accent text-accent-foreground'
+                  : 'hover:bg-accent/50'
+              )}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              Admin Panel
+            </Link>
+          )}
         </nav>
 
         {/* Right side */}
@@ -149,6 +179,14 @@ export function Header({ user }: HeaderProps) {
                   </div>
                 </div>
                 <DropdownMenuSeparator />
+                {user.isAdmin && (
+                  <DropdownMenuItem asChild>
+                    <Link href="/admin">
+                      <LayoutDashboard className="h-4 w-4 mr-2" />
+                      Admin Panel
+                    </Link>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem asChild>
                   <Link href="/settings">
                     <Settings className="h-4 w-4 mr-2" />
