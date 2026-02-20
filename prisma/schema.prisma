@@ -380,6 +380,7 @@ model NotificationSetting {
 
   // Event subscriptions
   onNewVideo        Boolean   @default(true)
+  onNewVersion      Boolean   @default(true)
   onNewComment      Boolean   @default(true)
   onNewReply        Boolean   @default(true)
 

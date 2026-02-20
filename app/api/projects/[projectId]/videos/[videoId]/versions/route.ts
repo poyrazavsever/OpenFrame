@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 import { validateUrl, validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
+import { notifyProjectOwner } from '@/lib/notifications';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string }> };
@@ -144,6 +145,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 },
             });
         });
+
+        // Notify project owner (fire-and-forget, skip if they added it themselves)
+        if (video.project.ownerId !== session.user.id) {
+            const baseUrl = process.env.NEXTAUTH_URL || '';
+            notifyProjectOwner(video.project.ownerId, {
+                type: 'new_version',
+                projectName: video.project.name,
+                videoTitle: video.title,
+                versionLabel: version.versionLabel || `Version ${version.versionNumber}`,
+                addedBy: session.user.name || 'A team member',
+                url: `${baseUrl}/watch/${video.id}`,
+            }).catch((err) => console.error('Notification failed:', err));
+        }
 
         const response = successResponse(version, 201);
         return withCacheControl(response, 'private, no-store');

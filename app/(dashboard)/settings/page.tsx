@@ -26,6 +26,7 @@ interface NotificationSettings {
   telegramEnabled: boolean;
   emailEnabled: boolean;
   onNewVideo: boolean;
+  onNewVersion: boolean;
   onNewComment: boolean;
   onNewReply: boolean;
   timezone: string;
@@ -83,6 +84,7 @@ export default function SettingsPage() {
     telegramEnabled: false,
     emailEnabled: false,
     onNewVideo: true,
+    onNewVersion: true,
     onNewComment: true,
     onNewReply: true,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -256,6 +258,14 @@ export default function SettingsPage() {
             }
             label="New Video Added"
             description="When a new video is added to one of your projects"
+          />
+          <ToggleButton
+            enabled={settings.onNewVersion}
+            onToggle={() =>
+              setSettings((s) => ({ ...s, onNewVersion: !s.onNewVersion }))
+            }
+            label="New Version Added"
+            description="When a new version is added to an existing video"
           />
           <ToggleButton
             enabled={settings.onNewComment}

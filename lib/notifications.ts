@@ -95,6 +95,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
 
 export type NotificationEvent =
     | { type: 'new_video'; projectName: string; videoTitle: string; addedBy: string; url: string }
+    | { type: 'new_version'; projectName: string; videoTitle: string; versionLabel: string; addedBy: string; url: string }
     | { type: 'new_comment'; projectName: string; videoTitle: string; commentAuthor: string; commentText: string; timestamp: string; url: string }
     | { type: 'new_reply'; projectName: string; videoTitle: string; replyAuthor: string; replyText: string; parentAuthor: string; timestamp: string; url: string };
 
@@ -121,6 +122,18 @@ function formatTelegramMessage(event: NotificationEvent, timezone: string): Tele
                     `▸ Added by: ${event.addedBy}\n` +
                     `▸ ${now}`,
                 buttonLabel: 'View Video',
+                buttonUrl: event.url,
+            };
+        case 'new_version':
+            return {
+                text:
+                    `🎬 New Version Added\n\n` +
+                    `▸ Project: ${event.projectName}\n` +
+                    `▸ Video: ${event.videoTitle}\n` +
+                    `▸ Version: ${event.versionLabel}\n` +
+                    `▸ Added by: ${event.addedBy}\n` +
+                    `▸ ${now}`,
+                buttonLabel: 'View Version',
                 buttonUrl: event.url,
             };
         case 'new_comment':
@@ -254,6 +267,23 @@ function formatEmail(event: NotificationEvent, timezone: string): { subject: str
                     </td></tr>
                 `),
             };
+        case 'new_version':
+            return {
+                subject: `[OpenFrame] New version of ${event.videoTitle} in ${event.projectName}`,
+                html: emailTemplate(`
+                    <tr>${emailHeading('&#9654;', 'New Version Added')}</tr>
+                    <tr><td style="padding:20px;">
+                      <table cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20px;">
+                        ${emailRow('Project', escapeHtml(event.projectName), true)}
+                        ${emailRow('Video', escapeHtml(event.videoTitle), true)}
+                        ${emailRow('Version', escapeHtml(event.versionLabel))}
+                        ${emailRow('Added by', escapeHtml(event.addedBy))}
+                        ${emailRow('When', now)}
+                      </table>
+                      ${emailButton('View Version  &#8594;', event.url)}
+                    </td></tr>
+                `),
+            };
         case 'new_comment':
             return {
                 subject: `[OpenFrame] New comment on ${event.videoTitle}`,
@@ -329,6 +359,7 @@ export async function notifyProjectOwner(ownerId: string, event: NotificationEve
 
         const shouldNotify =
             (event.type === 'new_video' && settings.onNewVideo) ||
+            (event.type === 'new_version' && settings.onNewVersion) ||
             (event.type === 'new_comment' && settings.onNewComment) ||
             (event.type === 'new_reply' && settings.onNewReply);
 
