@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   Plus,
@@ -46,6 +47,8 @@ interface ProjectContentClientProps {
   canEdit: boolean;
   isOwner: boolean;
   workspaceRole: string | null;
+  totalPages: number;
+  currentPage: number;
 }
 
 export function ProjectContentClient({
@@ -55,16 +58,32 @@ export function ProjectContentClient({
   canEdit,
   isOwner,
   workspaceRole,
+  totalPages,
+  currentPage
 }: ProjectContentClientProps) {
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sortOrder = searchParams.get('sort') || 'desc';
 
-  const sortedVideos = useMemo(() => {
-    return [...videos].sort((a, b) => {
-      const dateA = new Date(a.updatedAt).getTime();
-      const dateB = new Date(b.updatedAt).getTime();
-      return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
-    });
-  }, [videos, sortOrder]);
+  const createQueryString = useCallback(
+    (name: string, value: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set(name, value);
+
+      if (name !== 'page') {
+        params.set('page', '1');
+      }
+
+      return params.toString();
+    },
+    [searchParams]
+  );
+
+  const sortedVideos = [...videos].sort((a, b) => {
+    const dateA = new Date(a.updatedAt).getTime();
+    const dateB = new Date(b.updatedAt).getTime();
+    return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+  });
 
   return (
     <>
@@ -100,7 +119,10 @@ export function ProjectContentClient({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+            onClick={() => {
+              const newOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+              router.push(`?${createQueryString('sort', newOrder)}`);
+            }}
             className="flex items-center gap-2"
           >
             {sortOrder === 'desc' ? (
@@ -173,6 +195,39 @@ export function ProjectContentClient({
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-8 flex items-center justify-end space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={currentPage <= 1}
+            asChild={currentPage > 1}
+          >
+            {currentPage > 1 ? (
+              <Link href={`?${createQueryString('page', (currentPage - 1).toString())}`}>Previous</Link>
+            ) : (
+              "Previous"
+            )}
+          </Button>
+          <span className="text-sm font-medium">
+            Page {currentPage} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={currentPage >= totalPages}
+            asChild={currentPage < totalPages}
+          >
+            {currentPage < totalPages ? (
+              <Link href={`?${createQueryString('page', (currentPage + 1).toString())}`}>Next</Link>
+            ) : (
+              "Next"
+            )}
+          </Button>
+        </div>
       )}
     </>
   );

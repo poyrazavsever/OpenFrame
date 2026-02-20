@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useCallback } from 'react';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Plus, FolderOpen, Clock, Users, Globe, Lock, UserPlus, Building2, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,7 @@ interface SerializedProject {
 interface ProjectFilterProps {
   projects: SerializedProject[];
   workspaces: { id: string; name: string }[];
+  totalPages: number;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -59,25 +61,33 @@ function VisibilityIcon({ visibility }: { visibility: string }) {
 
 type SortOrder = 'desc' | 'asc';
 
-export function ProjectFilter({ projects, workspaces }: ProjectFilterProps) {
-  const [selectedWorkspace, setSelectedWorkspace] = useState<string>('all');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+export function ProjectFilter({ projects, workspaces, totalPages }: ProjectFilterProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
-  const filtered = useMemo(() => {
-    let result =
-      selectedWorkspace === 'all'
-        ? projects
-        : projects.filter((p) => p.workspaceId === selectedWorkspace);
+  const selectedWorkspace = searchParams.get('ws') || 'all';
+  const sortOrder = searchParams.get('sort') as SortOrder || 'desc';
+  const page = Number(searchParams.get('page')) || 1;
 
-    // Sort by date
-    result = [...result].sort((a, b) => {
-      const dateA = new Date(a.updatedAt).getTime();
-      const dateB = new Date(b.updatedAt).getTime();
-      return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
-    });
+  const createQueryString = useCallback(
+    (name: string, value: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (value === 'all' && name === 'ws') {
+        params.delete(name);
+      } else {
+        params.set(name, value);
+      }
 
-    return result;
-  }, [projects, selectedWorkspace, sortOrder]);
+      // Reset page when filter or sort changes
+      if (name !== 'page') {
+        params.set('page', '1');
+      }
+
+      return params.toString();
+    },
+    [searchParams]
+  );
 
   return (
     <>
@@ -86,7 +96,12 @@ export function ProjectFilter({ projects, workspaces }: ProjectFilterProps) {
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
           {workspaces.length > 0 && (
-            <Select value={selectedWorkspace} onValueChange={setSelectedWorkspace}>
+            <Select
+              value={selectedWorkspace}
+              onValueChange={(val) => {
+                router.push(`${pathname}?${createQueryString('ws', val)}`);
+              }}
+            >
               <SelectTrigger className="w-[200px]">
                 <SelectValue placeholder="All Workspaces" />
               </SelectTrigger>
@@ -105,7 +120,10 @@ export function ProjectFilter({ projects, workspaces }: ProjectFilterProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+            onClick={() => {
+              const newOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+              router.push(`${pathname}?${createQueryString('sort', newOrder)}`);
+            }}
             className="flex items-center gap-2"
           >
             {sortOrder === 'desc' ? (
@@ -130,9 +148,9 @@ export function ProjectFilter({ projects, workspaces }: ProjectFilterProps) {
       </div>
 
       {/* Projects Grid */}
-      {filtered.length > 0 ? (
+      {projects.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((project) => (
+          {projects.map((project) => (
             <Link key={project.id} href={`/projects/${project.id}`}>
               <Card className="h-full transition-colors hover:bg-accent/50 cursor-pointer">
                 <CardHeader>
@@ -195,6 +213,41 @@ export function ProjectFilter({ projects, workspaces }: ProjectFilterProps) {
             </Button>
           </CardContent>
         </Card>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-8 flex items-center justify-end space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => {
+              if (page > 1) {
+                router.push(`${pathname}?${createQueryString('page', (page - 1).toString())}`);
+                router.refresh();
+              }
+            }}
+          >
+            Previous
+          </Button>
+          <span className="text-sm font-medium">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => {
+              if (page < totalPages) {
+                router.push(`${pathname}?${createQueryString('page', (page + 1).toString())}`);
+                router.refresh();
+              }
+            }}
+          >
+            Next
+          </Button>
+        </div>
       )}
     </>
   );

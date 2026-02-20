@@ -50,11 +50,17 @@ function formatRelativeTime(date: Date): string {
 
 interface ProjectPageProps {
   params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ page?: string }>;
 }
 
-export default async function ProjectPage({ params }: ProjectPageProps) {
+export default async function ProjectPage({ params, searchParams }: ProjectPageProps) {
   const session = await auth();
   const { projectId } = await params;
+  const resolvedSearchParams = await searchParams;
+
+  const page = Number(resolvedSearchParams?.page) || 1;
+  const pageSize = 20;
+  const skip = (page - 1) * pageSize;
 
   // Fetch project with videos
   const project = await db.project.findUnique({
@@ -65,19 +71,6 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
       members: {
         where: { userId: session?.user?.id || '' },
         select: { role: true },
-      },
-      videos: {
-        orderBy: { position: 'asc' },
-        include: {
-          versions: {
-            where: { isActive: true },
-            take: 1,
-            include: {
-              _count: { select: { comments: true } },
-            },
-          },
-          _count: { select: { versions: true } },
-        },
       },
     },
   });
@@ -117,8 +110,33 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
     redirect('/dashboard');
   }
 
+  // Fetch videos separately utilizing bounds
+  const [paginatedVideos, totalVideos] = await Promise.all([
+    db.video.findMany({
+      where: { projectId: project.id },
+      skip,
+      take: pageSize,
+      orderBy: { position: 'asc' },
+      include: {
+        versions: {
+          where: { isActive: true },
+          take: 1,
+          include: {
+            _count: { select: { comments: true } },
+          },
+        },
+        _count: { select: { versions: true } },
+      },
+    }),
+    db.video.count({
+      where: { projectId: project.id }
+    })
+  ]);
+
+  const totalPages = Math.ceil(totalVideos / pageSize);
+
   // Transform videos for VideoCard component
-  const videos = project.videos.map((video: typeof project.videos[0]) => {
+  const videos = paginatedVideos.map((video) => {
     const activeVersion = video.versions[0];
     return {
       id: video.id,
@@ -165,6 +183,8 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
             canEdit={false}
             isOwner={false}
             workspaceRole={null}
+            totalPages={totalPages}
+            currentPage={page}
           />
         </div>
       </GuestGate>
@@ -190,6 +210,8 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
         canEdit={canEdit}
         isOwner={isOwner}
         workspaceRole={workspaceRole}
+        totalPages={totalPages}
+        currentPage={page}
       />
     </div>
   );
