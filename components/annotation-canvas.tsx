@@ -207,41 +207,47 @@ export const AnnotationCanvas = forwardRef<AnnotationCanvasHandle, AnnotationCan
             />
 
             {/* Toolbar */}
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-background/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg border z-30">
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center justify-center flex-wrap gap-x-2 gap-y-2 w-[calc(100%-24px)] max-w-fit bg-background/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg border z-30">
                 {/* Colors */}
-                {COLORS.map(c => (
-                    <button
-                        key={c}
-                        className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 shrink-0"
-                        style={{
-                            backgroundColor: c,
-                            borderColor: color === c ? 'white' : 'transparent',
-                            boxShadow: color === c ? `0 0 0 2px ${c}` : 'none',
-                        }}
-                        onClick={() => setColor(c)}
-                    />
-                ))}
+                <div className="flex items-center justify-center flex-wrap gap-1.5">
+                    {COLORS.map(c => (
+                        <button
+                            key={c}
+                            className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 shrink-0"
+                            style={{
+                                backgroundColor: c,
+                                borderColor: color === c ? 'white' : 'transparent',
+                                boxShadow: color === c ? `0 0 0 2px ${c}` : 'none',
+                            }}
+                            onClick={() => setColor(c)}
+                        />
+                    ))}
+                </div>
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="hidden sm:block w-px h-6 bg-border mx-1" />
 
                 {/* Brush size */}
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWidth(w => Math.max(MIN_WIDTH, w - 1))}>
-                    <Minus className="h-3 w-3" />
-                </Button>
-                <span className="text-xs tabular-nums w-4 text-center">{width}</span>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWidth(w => Math.min(MAX_WIDTH, w + 1))}>
-                    <Plus className="h-3 w-3" />
-                </Button>
+                <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWidth(w => Math.max(MIN_WIDTH, w - 1))}>
+                        <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="text-xs tabular-nums w-4 text-center">{width}</span>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWidth(w => Math.min(MAX_WIDTH, w + 1))}>
+                        <Plus className="h-3 w-3" />
+                    </Button>
+                </div>
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="hidden sm:block w-px h-6 bg-border mx-1" />
 
                 {/* Actions */}
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleUndo} disabled={strokes.length === 0} title="Undo">
-                    <Undo2 className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleClear} disabled={strokes.length === 0} title="Clear all">
-                    <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleUndo} disabled={strokes.length === 0} title="Undo">
+                        <Undo2 className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={handleClear} disabled={strokes.length === 0} title="Clear all">
+                        <Trash2 className="h-4 w-4" />
+                    </Button>
+                </div>
             </div>
         </div>
     );
