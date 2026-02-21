@@ -266,6 +266,9 @@ model Comment {
   // Image attachment (optional)
   imageUrl      String?     // URL to uploaded image file
   
+  // Annotation drawing data (JSON string of strokes)
+  annotationData String?    @db.Text
+  
   // Threading
   parentId      String?
   parent        Comment?    @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)

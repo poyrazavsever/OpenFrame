@@ -76,6 +76,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { parseVideoUrl, getThumbnailUrl, fetchVideoMetadata, type VideoSource } from '@/lib/video-providers';
+import { AnnotationCanvas, type AnnotationStroke, type AnnotationCanvasHandle } from '@/components/annotation-canvas';
 import { Linkify } from '@/components/linkify';
 
 interface Version {
@@ -105,6 +106,7 @@ interface Comment {
   voiceUrl: string | null;
   voiceDuration: number | null;
   imageUrl: string | null;
+  annotationData: string | null;
   isResolved: boolean;
   createdAt: string;
   author: { id: string; name: string | null; image: string | null } | null;
@@ -116,6 +118,7 @@ interface Comment {
     voiceUrl: string | null;
     voiceDuration: number | null;
     imageUrl: string | null;
+    annotationData: string | null;
     createdAt: string;
     author: { id: string; name: string | null; image: string | null } | null;
     guestName: string | null;
@@ -236,10 +239,19 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [editTagId, setEditTagId] = useState<string | null>(null);
+  const [editAnnotationData, setEditAnnotationData] = useState<string | null | undefined>(undefined);
+  const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
+  const editAnnotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
   const isMutatingRef = useRef(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Annotation state
+  const [isAnnotating, setIsAnnotating] = useState(false);
+  const [annotationStrokes, setAnnotationStrokes] = useState<AnnotationStroke[] | null>(null);
+  const [viewingAnnotation, setViewingAnnotation] = useState<AnnotationStroke[] | null>(null);
+  const annotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
 
   const [guestName, setGuestName] = useState('');
   const [guestNameConfirmed, setGuestNameConfirmed] = useState(mode === 'dashboard');
@@ -833,10 +845,22 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     }
   }, [isPlaying]);
 
-  const handleSeekToTimestamp = useCallback((timestamp: number) => {
+  const handleSeekToTimestamp = useCallback((timestamp: number, annotation?: string | null) => {
     setCurrentTime(timestamp);
     if (playerRef.current?.seekTo) {
       playerRef.current.seekTo(timestamp, true);
+      playerRef.current.pauseVideo();
+    }
+    // Show annotation overlay if present
+    if (annotation) {
+      try {
+        const strokes = JSON.parse(annotation) as AnnotationStroke[];
+        setViewingAnnotation(strokes);
+      } catch {
+        setViewingAnnotation(null);
+      }
+    } else {
+      setViewingAnnotation(null);
     }
   }, []);
 
@@ -905,10 +929,20 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   }, [isDragging, currentTime, handleSeekToTimestamp]);
 
   const handleAddComment = useCallback(async (voiceData?: { url: string; duration: number }, imageData?: { url: string }) => {
-    if (!voiceData && !imageBlob && !commentText.trim()) return;
+    if (!voiceData && !imageBlob && !commentText.trim() && !annotationStrokes && !isAnnotating) return;
     if (!activeVersion) return;
 
+    // Auto-capture strokes from canvas if still in draw mode
+    let effectiveStrokes = annotationStrokes;
+    if (isAnnotating && annotationCanvasRef.current) {
+      const canvasStrokes = annotationCanvasRef.current.getStrokes();
+      if (canvasStrokes.length > 0) {
+        effectiveStrokes = canvasStrokes;
+      }
+    }
+
     const tempId = `temp-${Date.now()}`;
+    const serializedAnnotation = effectiveStrokes ? JSON.stringify(effectiveStrokes) : null;
     const optimisticComment: Comment = {
       id: tempId,
       content: (voiceData || imageBlob) ? commentText.trim() || null : commentText,
@@ -916,6 +950,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       voiceUrl: voiceData?.url ?? null,
       voiceDuration: voiceData?.duration ?? null,
       imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null,
+      annotationData: serializedAnnotation,
       isResolved: false,
       createdAt: new Date().toISOString(),
       author: isGuest ? null : { id: 'current-user', name: currentUserName, image: null },
@@ -941,6 +976,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     setSelectedTagId(availableTags.length > 0 ? availableTags[0].id : null);
     setAudioBlob(null);
     setImageBlob(null);
+    setAnnotationStrokes(null);
+    setIsAnnotating(false);
+    setViewingAnnotation(effectiveStrokes || null);
 
     setIsSubmittingComment(true);
     isMutatingRef.current = true;
@@ -973,6 +1011,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           ...(imageData && { imageUrl: imageData.url }),
           ...(isGuest && guestName && { guestName }),
           ...(selectedTagId && { tagId: selectedTagId }),
+          ...(serializedAnnotation && { annotationData: serializedAnnotation }),
         }),
       });
 
@@ -1022,7 +1061,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingImage(false);
       isMutatingRef.current = false;
     }
-  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, selectedTagId, availableTags, imageBlob]);
+  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, selectedTagId, availableTags, imageBlob, annotationStrokes, isAnnotating]);
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>, isReply: boolean = false) => {
     const file = e.target.files?.[0];
@@ -1374,6 +1413,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       voiceUrl: voiceData?.url ?? null,
       voiceDuration: voiceData?.duration ?? null,
       imageUrl: replyImageBlob ? URL.createObjectURL(replyImageBlob) : null,
+      annotationData: null,
       createdAt: new Date().toISOString(),
       author: isGuest ? null : { id: 'current-user', name: currentUserName, image: null },
       guestName: isGuest ? guestName : null,
@@ -1614,12 +1654,23 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   }, [replyAudioBlob, replyImageBlob, activeVersion, replyRecordingTime, replyText, submitVoiceReply, handleReplyComment]);
 
   const handleEditComment = useCallback(async (commentId: string) => {
-    if (!editText.trim()) return;
+    if (!editText.trim() && !editAnnotationData) return;
     setIsSubmittingEdit(true);
     isMutatingRef.current = true;
+
+    // Auto-capture strokes from edit canvas if still drawing
+    let finalAnnotationData = editAnnotationData;
+    if (isEditingAnnotation && editAnnotationCanvasRef.current) {
+      const strokes = editAnnotationCanvasRef.current.getStrokes();
+      if (strokes.length > 0) {
+        finalAnnotationData = JSON.stringify(strokes);
+      }
+    }
+
     try {
       const body: Record<string, unknown> = { content: editText };
       if (editTagId !== undefined) body.tagId = editTagId;
+      if (finalAnnotationData !== undefined) body.annotationData = finalAnnotationData;
       const res = await fetch(`/api/comments/${commentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1636,7 +1687,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                 ? {
                   ...v,
                   comments: v.comments.map((c) => {
-                    if (c.id === commentId) return { ...c, content: editText.trim(), tag: editTagId !== undefined ? editedTag : c.tag };
+                    if (c.id === commentId) return { ...c, content: editText.trim(), tag: editTagId !== undefined ? editedTag : c.tag, annotationData: finalAnnotationData !== undefined ? finalAnnotationData : c.annotationData };
                     return {
                       ...c,
                       replies: (c.replies || []).map((r) =>
@@ -1652,6 +1703,16 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         setEditingCommentId(null);
         setEditText('');
         setEditTagId(null);
+        setEditAnnotationData(undefined);
+        setIsEditingAnnotation(false);
+        // Update the viewing overlay if it was showing this annotation
+        if (finalAnnotationData !== undefined && finalAnnotationData) {
+          try {
+            setViewingAnnotation(JSON.parse(finalAnnotationData));
+          } catch { /* ignore parse errors */ }
+        } else if (finalAnnotationData === null) {
+          setViewingAnnotation(null);
+        }
       }
     } catch (err) {
       console.error('Failed to edit comment:', err);
@@ -1659,7 +1720,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsSubmittingEdit(false);
       isMutatingRef.current = false;
     }
-  }, [editText, editTagId, activeVersionId, availableTags]);
+  }, [editText, editTagId, editAnnotationData, isEditingAnnotation, activeVersionId, availableTags]);
 
   const handleDeleteComment = useCallback(async (commentId: string) => {
     setDeletingCommentId(commentId);
@@ -2258,6 +2319,47 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                   </div>
                 </div>
               )}
+
+              {/* Annotation canvas overlay – drawing mode */}
+              {isAnnotating && (
+                <AnnotationCanvas
+                  ref={annotationCanvasRef}
+                  mode="draw"
+                  onConfirm={(strokes) => {
+                    setAnnotationStrokes(strokes);
+                    setIsAnnotating(false);
+                  }}
+                  onCancel={() => {
+                    setIsAnnotating(false);
+                    setAnnotationStrokes(null);
+                  }}
+                />
+              )}
+
+              {/* Annotation canvas overlay – viewing mode */}
+              {viewingAnnotation && !isAnnotating && !isEditingAnnotation && (
+                <AnnotationCanvas
+                  mode="view"
+                  strokes={viewingAnnotation}
+                  onDismiss={() => setViewingAnnotation(null)}
+                />
+              )}
+
+              {/* Annotation canvas overlay – edit annotation mode */}
+              {isEditingAnnotation && (
+                <AnnotationCanvas
+                  ref={editAnnotationCanvasRef}
+                  mode="draw"
+                  strokes={editAnnotationData ? (() => { try { return JSON.parse(editAnnotationData); } catch { return undefined; } })() : (() => { const c = comments.find(c => c.id === editingCommentId); if (c?.annotationData) { try { return JSON.parse(c.annotationData); } catch { return undefined; } } return undefined; })()}
+                  onConfirm={(strokes) => {
+                    setEditAnnotationData(JSON.stringify(strokes));
+                    setIsEditingAnnotation(false);
+                  }}
+                  onCancel={() => {
+                    setIsEditingAnnotation(false);
+                  }}
+                />
+              )}
             </div>
           </div>
 
@@ -2382,7 +2484,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                     key={comment.id}
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleSeekToTimestamp(comment.timestamp);
+                      handleSeekToTimestamp(comment.timestamp, comment.annotationData);
                     }}
                     className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full transition-transform hover:scale-150 z-10"
                     style={{
@@ -2465,7 +2567,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
                       <div className="flex items-center gap-1 shrink-0">
                         <button
-                          onClick={() => handleSeekToTimestamp(comment.timestamp)}
+                          onClick={() => handleSeekToTimestamp(comment.timestamp, comment.annotationData)}
                           className="flex items-center gap-1 text-xs text-primary hover:underline px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
                           title="Jump to this timestamp"
                         >
@@ -2545,10 +2647,12 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                               setEditingCommentId(null);
                               setEditText('');
                               setEditTagId(null);
+                              setEditAnnotationData(undefined);
+                              setIsEditingAnnotation(false);
                             }
                           }}
                         />
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 flex-wrap">
                           <Button
                             size="sm"
                             onClick={() => handleEditComment(comment.id)}
@@ -2560,10 +2664,23 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => { setEditingCommentId(null); setEditText(''); setEditTagId(null); }}
+                            onClick={() => { setEditingCommentId(null); setEditText(''); setEditTagId(null); setEditAnnotationData(undefined); setIsEditingAnnotation(false); }}
                             className="h-7 text-xs"
                           >
                             Cancel
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant={comment.annotationData || editAnnotationData ? 'default' : 'outline'}
+                            className={`h-7 w-7 ${comment.annotationData || editAnnotationData ? 'bg-violet-500 hover:bg-violet-600' : ''}`}
+                            onClick={() => {
+                              if (playerRef.current?.pauseVideo) playerRef.current.pauseVideo();
+                              setIsEditingAnnotation(true);
+                              setIsAnnotating(false);
+                            }}
+                            title={comment.annotationData ? 'Redraw annotation' : 'Add annotation'}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
                           </Button>
                           {availableTags.length > 0 && (
                             <DropdownMenu>
@@ -2661,6 +2778,12 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                       <p className="text-xs text-muted-foreground">
                         {new Date(comment.createdAt).toLocaleDateString()}
                       </p>
+                      {comment.annotationData && (
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-500 text-white shrink-0 flex items-center gap-1">
+                          <Pencil className="h-2.5 w-2.5" />
+                          Annotated
+                        </span>
+                      )}
                       {comment.tag && (
                         <span
                           className="text-[10px] font-medium px-2 py-0.5 rounded-full text-white shrink-0"
@@ -3128,6 +3251,18 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
               </div>
             ) : (
               <>
+                {(annotationStrokes || isAnnotating) && (
+                  <div className="flex items-center gap-2 px-2 py-1.5 mb-2 rounded-md bg-violet-500/10 border border-violet-500/30">
+                    <Pencil className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+                    <span className="text-xs text-violet-400 font-medium">Annotation attached</span>
+                    <button
+                      className="ml-auto text-xs text-muted-foreground hover:text-destructive transition-colors"
+                      onClick={() => setAnnotationStrokes(null)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
                 {imageBlob && (
                   <div className="relative group rounded-md overflow-hidden bg-muted flex items-center justify-center max-h-40 mb-2">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3160,7 +3295,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                     <Button
                       size="icon"
                       onClick={() => handleAddComment()}
-                      disabled={(!commentText.trim() && !imageBlob) || isSubmittingComment || isUploadingImage}
+                      disabled={(!commentText.trim() && !imageBlob && !annotationStrokes) || isSubmittingComment || isUploadingImage}
                     >
                       {isSubmittingComment || isUploadingImage ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -3183,6 +3318,22 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                       title="Attach Image"
                     >
                       <ImageIcon className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant={annotationStrokes ? 'default' : 'outline'}
+                      className={annotationStrokes ? 'bg-violet-500 hover:bg-violet-600' : ''}
+                      onClick={() => {
+                        if (isAnnotating) return;
+                        // Pause video when opening annotation tool
+                        if (playerRef.current?.pauseVideo) {
+                          playerRef.current.pauseVideo();
+                        }
+                        setIsAnnotating(true);
+                      }}
+                      title={annotationStrokes ? 'Annotation added ✓ (click to redraw)' : 'Draw annotation on video'}
+                    >
+                      <Pencil className="h-4 w-4" />
                     </Button>
                     <input
                       type="file"

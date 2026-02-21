@@ -176,10 +176,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         }
 
         const body = await request.json();
-        const { content, isResolved, tagId } = body;
+        const { content, isResolved, tagId, annotationData } = body;
 
         // Only author can edit content or tag
-        if ((content !== undefined || tagId !== undefined) && !isAuthor) {
+        if ((content !== undefined || tagId !== undefined || annotationData !== undefined) && !isAuthor) {
             return apiErrors.forbidden('Only the author can edit comment content');
         }
 
@@ -191,6 +191,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const updateData: Record<string, unknown> = {};
         if (content !== undefined && typeof content === 'string') updateData.content = content.trim();
         if (tagId !== undefined) updateData.tagId = tagId;
+        if (annotationData !== undefined) updateData.annotationData = annotationData;
         if (isResolved !== undefined) {
             updateData.isResolved = isResolved;
             updateData.resolvedAt = isResolved ? new Date() : null;

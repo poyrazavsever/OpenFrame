@@ -83,6 +83,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 voiceUrl: true,
                 voiceDuration: true,
                 imageUrl: true,
+                annotationData: true,
                 parentId: true,
                 authorId: true,
                 tagId: true,
@@ -104,6 +105,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                         voiceUrl: true,
                         voiceDuration: true,
                         imageUrl: true,
+                        annotationData: true,
                         parentId: true,
                         authorId: true,
                         tagId: true,
@@ -184,7 +186,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         }
 
         const body = await request.json();
-        const { content, timestamp, timestampEnd, parentId, voiceUrl, voiceDuration, guestName, guestEmail, tagId, imageUrl } = body;
+        const { content, timestamp, timestampEnd, parentId, voiceUrl, voiceDuration, guestName, guestEmail, tagId, imageUrl, annotationData } = body;
 
         // Validate required fields
         if (timestamp === undefined || timestamp === null) {
@@ -196,8 +198,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return apiErrors.badRequest('Timestamp must be a valid number');
         }
 
-        if (!content && !voiceUrl && !imageUrl) {
-            return apiErrors.badRequest('Either content, a voice recording, or an image attachment is required');
+        if (!content && !voiceUrl && !imageUrl && !annotationData) {
+            return apiErrors.badRequest('Either content, a voice recording, an image attachment, or an annotation is required');
         }
 
         // If replying, verify parent exists in same version
@@ -240,6 +242,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 voiceUrl: voiceUrl || null,
                 voiceDuration: voiceDuration || null,
                 imageUrl: imageUrl || null,
+                annotationData: annotationData || null,
                 authorId: session?.user?.id || null,
                 guestName: isGuest ? guestName : null,
                 guestEmail: isGuest ? guestEmail : null,
