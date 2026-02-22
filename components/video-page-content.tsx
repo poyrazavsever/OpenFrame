@@ -41,6 +41,7 @@ import {
   Minimize,
   Image as ImageIcon,
   Download,
+  FileText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -253,6 +254,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const voiceKnownDurationRef = useRef<number>(0);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   // Watch progress state
   const [savedProgress, setSavedProgress] = useState<number | null>(null);
@@ -366,6 +369,64 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const handleToggleShowResolved = useCallback(() => {
     setShowResolved(prev => !prev);
   }, []);
+
+  const handleExportComments = useCallback(
+    async (format: 'csv' | 'pdf') => {
+      if (!activeVersionId) return;
+
+      if (format === 'csv') {
+        setIsExportingCsv(true);
+      } else {
+        setIsExportingPdf(true);
+      }
+
+      try {
+        const response = await fetch(
+          `/api/versions/${activeVersionId}/comments/export?format=${format}&includeResolved=${showResolved}`
+        );
+
+        if (!response.ok) {
+          let message = 'Failed to export comments';
+          try {
+            const data = await response.json();
+            if (typeof data?.error === 'string') {
+              message = data.error;
+            }
+          } catch {
+            // Keep fallback message when response is not JSON.
+          }
+          throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const disposition = response.headers.get('content-disposition');
+        const fallbackName = `comments.${format}`;
+        const matched = disposition?.match(/filename="?([^"]+)"?/i);
+        const filename = matched?.[1] || fallbackName;
+
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(downloadUrl);
+
+        toast.success(`Comments exported as ${format.toUpperCase()}`);
+      } catch (error) {
+        console.error('Failed to export comments:', error);
+        toast.error(error instanceof Error ? error.message : 'Failed to export comments');
+      } finally {
+        if (format === 'csv') {
+          setIsExportingCsv(false);
+        } else {
+          setIsExportingPdf(false);
+        }
+      }
+    },
+    [activeVersionId, showResolved]
+  );
 
   const handleVideoMouseMove = useCallback(() => {
     setCursorIdle(false);
@@ -3163,6 +3224,32 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleToggleShowResolved(); }}>
                 {showResolved ? 'Hide' : 'Show'} Resolved
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                disabled={!activeVersion || isExportingCsv || isExportingPdf}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleExportComments('csv');
+                }}
+                title="Download comments as CSV"
+              >
+                {isExportingCsv ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                disabled={!activeVersion || isExportingCsv || isExportingPdf}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleExportComments('pdf');
+                }}
+                title="Download comments as PDF"
+              >
+                {isExportingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
               </Button>
               <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" onClick={() => setIsMobileCommentsOpen(false)}>
                 <X className="h-4 w-4" />
