@@ -893,7 +893,7 @@ export function LandingPage({ isLoggedIn }: LandingPageProps) {
                 >
                   <span className="pointer-events-none absolute inset-0 -translate-x-[101%] bg-primary-foreground/10 transition-transform duration-300 group-hover:translate-x-0" />
                   <span className="relative z-10 inline-flex items-center gap-2">
-                    Deploy on Cloud
+                    {isLoggedIn ? 'Go to Dashboard' : 'Start Now'}
                     <MoveRight className="h-4 w-4" />
                   </span>
                 </Link>
