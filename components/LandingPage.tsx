@@ -327,7 +327,7 @@ export function LandingPage({ isLoggedIn }: LandingPageProps) {
           <div className="relative mx-auto grid min-h-[calc(100vh-8rem)] w-full max-w-[1200px] items-center gap-10 lg:grid-cols-[1fr_1.05fr] lg:gap-14">
             <div className="space-y-7">
               <p data-hero-copy className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                VIDEO FEEDBACK PROTOCOL
+                OPEN SOURCE VIDEO REVIEW TOOL
               </p>
               <h1 data-hero-copy className="max-w-2xl text-4xl font-semibold leading-[1.03] tracking-[-0.03em] sm:text-5xl md:text-8xl">
                 Review Video. Without the Chaos.
@@ -428,7 +428,7 @@ export function LandingPage({ isLoggedIn }: LandingPageProps) {
           <div className="mx-auto w-full max-w-[1200px]">
             <div data-reveal className="mb-10 flex flex-col gap-4">
               <h2 className="text-3xl font-semibold tracking-[-0.02em] md:text-5xl">
-                Collaborative video review as precision software.
+                Fast, precise collaborative video review.
               </h2>
               <p className="max-w-2xl text-sm text-muted-foreground">
                 Guest commenting via shareable links and workspace-level permissions are available on every project.

@@ -25,6 +25,29 @@ export const metadata: Metadata = {
     title: 'Manage Users | Admin',
 };
 
+type SortBy =
+    | 'user'
+    | 'joinedDate'
+    | 'workspacesOwned'
+    | 'invitedMembers'
+    | 'projectsOwned'
+    | 'totalComments'
+    | 'bunnyUpload'
+    | 'mediaStorage';
+
+type SortDirection = 'asc' | 'desc';
+
+const SORTABLE_COLUMNS: SortBy[] = [
+    'user',
+    'joinedDate',
+    'workspacesOwned',
+    'invitedMembers',
+    'projectsOwned',
+    'totalComments',
+    'bunnyUpload',
+    'mediaStorage',
+];
+
 function formatBytes(bytes: number, decimals = 2) {
     if (bytes < 0) return 'Error Fetching';
     if (!+bytes) return '0 Bytes';
@@ -35,31 +58,55 @@ function formatBytes(bytes: number, decimals = 2) {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
+function isSortBy(value: string | undefined): value is SortBy {
+    return !!value && SORTABLE_COLUMNS.includes(value as SortBy);
+}
+
+function getDefaultSortDirection(sortBy: SortBy): SortDirection {
+    return sortBy === 'user' ? 'asc' : 'desc';
+}
+
+function getSortIndicator(column: SortBy, activeSortBy: SortBy, activeSortDirection: SortDirection): string {
+    if (column !== activeSortBy) return '↕';
+    return activeSortDirection === 'asc' ? '↑' : '↓';
+}
+
 export default async function AdminUsersPage({
     searchParams
 }: {
-    searchParams: { page?: string }
+    searchParams: Promise<{ page?: string; sortBy?: string; sortDirection?: string }>
 }) {
     const session = await auth();
     if (!session?.user?.isAdmin) {
         redirect('/');
     }
 
-    const page = Number(searchParams?.page) || 1;
+    const resolvedSearchParams = await searchParams;
+    const requestedPage = Number(resolvedSearchParams?.page) || 1;
     const pageSize = 20;
-    const skip = (page - 1) * pageSize;
+    const sortBy: SortBy = isSortBy(resolvedSearchParams?.sortBy) ? resolvedSearchParams.sortBy : 'joinedDate';
+    const sortDirection: SortDirection =
+        resolvedSearchParams?.sortDirection === 'asc' || resolvedSearchParams?.sortDirection === 'desc'
+            ? resolvedSearchParams.sortDirection
+            : getDefaultSortDirection(sortBy);
 
-    // Fetch users with their counts and total count
-    const [users, totalUsers] = await Promise.all([
+    const [users, userStorage, userBunnyStorage, bunnyStorageStats] = await Promise.all([
         db.user.findMany({
-            skip,
-            take: pageSize,
             orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
                 name: true,
                 email: true,
                 createdAt: true,
+                ownedWorkspaces: {
+                    select: {
+                        _count: {
+                            select: {
+                                members: true,
+                            }
+                        }
+                    }
+                },
                 _count: {
                     select: {
                         ownedWorkspaces: true,
@@ -69,17 +116,81 @@ export default async function AdminUsersPage({
                 }
             }
         }),
-        db.user.count()
-    ]);
-
-    const totalPages = Math.ceil(totalUsers / pageSize);
-
-    // Determine per-user storage usage (cached)
-    const [userStorage, userBunnyStorage, bunnyStorageStats] = await Promise.all([
         getCachedUserMediaStorage(),
         getCachedUserBunnyStorage(),
         getCachedBunnyStorageStats(),
     ]);
+
+    const usersWithMetrics = users.map((user) => ({
+        ...user,
+        invitedMembersCount: user.ownedWorkspaces.reduce(
+            (total, workspace) => total + workspace._count.members,
+            0
+        ),
+        bunnyUploadBytes: userBunnyStorage[user.id] || 0,
+        mediaStorageBytes: userStorage[user.id]?.total || 0,
+    }));
+
+    const sortedUsers = [...usersWithMetrics].sort((a, b) => {
+        let comparison = 0;
+
+        if (sortBy === 'user') {
+            const aLabel = (a.name || a.email || 'Anonymous').toLowerCase();
+            const bLabel = (b.name || b.email || 'Anonymous').toLowerCase();
+            comparison = aLabel.localeCompare(bLabel);
+        } else if (sortBy === 'joinedDate') {
+            comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        } else if (sortBy === 'workspacesOwned') {
+            comparison = a._count.ownedWorkspaces - b._count.ownedWorkspaces;
+        } else if (sortBy === 'invitedMembers') {
+            comparison = a.invitedMembersCount - b.invitedMembersCount;
+        } else if (sortBy === 'projectsOwned') {
+            comparison = a._count.projects - b._count.projects;
+        } else if (sortBy === 'totalComments') {
+            comparison = a._count.comments - b._count.comments;
+        } else if (sortBy === 'bunnyUpload') {
+            comparison = a.bunnyUploadBytes - b.bunnyUploadBytes;
+        } else if (sortBy === 'mediaStorage') {
+            comparison = a.mediaStorageBytes - b.mediaStorageBytes;
+        }
+
+        if (comparison === 0) {
+            comparison = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
+
+        return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    const totalUsers = sortedUsers.length;
+    const totalPages = Math.max(1, Math.ceil(totalUsers / pageSize));
+    const page = Math.min(Math.max(1, requestedPage), totalPages);
+    const skip = (page - 1) * pageSize;
+    const paginatedUsers = sortedUsers.slice(skip, skip + pageSize);
+
+    const buildUsersPageHref = (
+        targetPage: number,
+        targetSortBy: SortBy = sortBy,
+        targetSortDirection: SortDirection = sortDirection
+    ): string => {
+        const params = new URLSearchParams({
+            page: String(targetPage),
+            sortBy: targetSortBy,
+            sortDirection: targetSortDirection,
+        });
+
+        return `/admin/users?${params.toString()}`;
+    };
+
+    const buildSortHref = (column: SortBy): string => {
+        const nextDirection: SortDirection =
+            column === sortBy
+                ? sortDirection === 'asc'
+                    ? 'desc'
+                    : 'asc'
+                : getDefaultSortDirection(column);
+
+        return buildUsersPageHref(1, column, nextDirection);
+    };
 
     return (
         <div className="flex-1 space-y-4 px-4 md:px-8">
@@ -122,24 +233,65 @@ export default async function AdminUsersPage({
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>User</TableHead>
-                                    <TableHead>Joined Date</TableHead>
-                                    <TableHead className="text-center">Workspaces Owned</TableHead>
-                                    <TableHead className="text-center">Projects Owned</TableHead>
-                                    <TableHead className="text-center">Total Comments</TableHead>
-                                    <TableHead className="text-right">Bunny Upload</TableHead>
-                                    <TableHead className="text-right">Media Storage</TableHead>
+                                    <TableHead>
+                                        <Link href={buildSortHref('user')} className="inline-flex items-center gap-1 hover:underline">
+                                            User
+                                            <span className="text-xs">{getSortIndicator('user', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
+                                    <TableHead>
+                                        <Link href={buildSortHref('joinedDate')} className="inline-flex items-center gap-1 hover:underline">
+                                            Joined Date
+                                            <span className="text-xs">{getSortIndicator('joinedDate', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
+                                    <TableHead className="text-center">
+                                        <Link href={buildSortHref('workspacesOwned')} className="inline-flex items-center justify-center gap-1 hover:underline">
+                                            Workspaces Owned
+                                            <span className="text-xs">{getSortIndicator('workspacesOwned', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
+                                    <TableHead className="text-center">
+                                        <Link href={buildSortHref('invitedMembers')} className="inline-flex items-center justify-center gap-1 hover:underline">
+                                            Invited Members
+                                            <span className="text-xs">{getSortIndicator('invitedMembers', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
+                                    <TableHead className="text-center">
+                                        <Link href={buildSortHref('projectsOwned')} className="inline-flex items-center justify-center gap-1 hover:underline">
+                                            Projects Owned
+                                            <span className="text-xs">{getSortIndicator('projectsOwned', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
+                                    <TableHead className="text-center">
+                                        <Link href={buildSortHref('totalComments')} className="inline-flex items-center justify-center gap-1 hover:underline">
+                                            Total Comments
+                                            <span className="text-xs">{getSortIndicator('totalComments', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
+                                    <TableHead className="text-right">
+                                        <Link href={buildSortHref('bunnyUpload')} className="inline-flex items-center justify-end gap-1 hover:underline">
+                                            Bunny Upload
+                                            <span className="text-xs">{getSortIndicator('bunnyUpload', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
+                                    <TableHead className="text-right">
+                                        <Link href={buildSortHref('mediaStorage')} className="inline-flex items-center justify-end gap-1 hover:underline">
+                                            Media Storage
+                                            <span className="text-xs">{getSortIndicator('mediaStorage', sortBy, sortDirection)}</span>
+                                        </Link>
+                                    </TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {users.length === 0 ? (
+                                {paginatedUsers.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="h-24 text-center">
+                                        <TableCell colSpan={8} className="h-24 text-center">
                                             No users found.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    users.map((user) => (
+                                    paginatedUsers.map((user) => (
                                         <TableRow key={user.id}>
                                             <TableCell>
                                                 <div className="flex flex-col">
@@ -151,14 +303,15 @@ export default async function AdminUsersPage({
                                                 {format(new Date(user.createdAt), 'MMM dd, yyyy')}
                                             </TableCell>
                                             <TableCell className="text-center">{user._count.ownedWorkspaces}</TableCell>
+                                            <TableCell className="text-center">{user.invitedMembersCount}</TableCell>
                                             <TableCell className="text-center">{user._count.projects}</TableCell>
                                             <TableCell className="text-center">{user._count.comments}</TableCell>
                                             <TableCell className="text-right text-sm font-medium">
-                                                {formatBytes(userBunnyStorage[user.id] || 0)}
+                                                {formatBytes(user.bunnyUploadBytes)}
                                             </TableCell>
                                             <TableCell className="text-right text-sm">
                                                 <div className="flex flex-col items-end">
-                                                    <span className="font-medium text-foreground">{formatBytes(userStorage[user.id]?.total || 0)}</span>
+                                                    <span className="font-medium text-foreground">{formatBytes(user.mediaStorageBytes)}</span>
                                                     {(userStorage[user.id]?.voice > 0 || userStorage[user.id]?.image > 0) && (
                                                         <span className="text-xs text-muted-foreground mt-0.5 whitespace-nowrap space-x-1">
                                                             {userStorage[user.id]?.voice > 0 && <span>🎤 {formatBytes(userStorage[user.id]?.voice)}</span>}
@@ -184,7 +337,7 @@ export default async function AdminUsersPage({
                                 asChild={page > 1}
                             >
                                 {page > 1 ? (
-                                    <Link href={`/admin/users?page=${page - 1}`}>Previous</Link>
+                                    <Link href={buildUsersPageHref(page - 1)}>Previous</Link>
                                 ) : (
                                     "Previous"
                                 )}
@@ -199,7 +352,7 @@ export default async function AdminUsersPage({
                                 asChild={page < totalPages}
                             >
                                 {page < totalPages ? (
-                                    <Link href={`/admin/users?page=${page + 1}`}>Next</Link>
+                                    <Link href={buildUsersPageHref(page + 1)}>Next</Link>
                                 ) : (
                                     "Next"
                                 )}
