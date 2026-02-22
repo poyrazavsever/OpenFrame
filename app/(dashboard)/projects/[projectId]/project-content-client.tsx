@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -20,8 +20,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { VideoCard } from '@/components/video-card';
-
-type SortOrder = 'desc' | 'asc';
 
 interface SerializedVideo {
   id: string;
@@ -57,13 +55,17 @@ export function ProjectContentClient({
   videos,
   canEdit,
   isOwner,
-  workspaceRole,
   totalPages,
   currentPage
 }: ProjectContentClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sortOrder = searchParams.get('sort') || 'desc';
+  const [localVideos, setLocalVideos] = useState<SerializedVideo[]>(videos);
+
+  useEffect(() => {
+    setLocalVideos(videos);
+  }, [videos]);
 
   const createQueryString = useCallback(
     (name: string, value: string) => {
@@ -79,11 +81,15 @@ export function ProjectContentClient({
     [searchParams]
   );
 
-  const sortedVideos = [...videos].sort((a, b) => {
+  const sortedVideos = [...localVideos].sort((a, b) => {
     const dateA = new Date(a.updatedAt).getTime();
     const dateB = new Date(b.updatedAt).getTime();
     return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
   });
+
+  const handleVideoDeleted = useCallback((videoId: string) => {
+    setLocalVideos((prev) => prev.filter((video) => video.id !== videoId));
+  }, []);
 
   return (
     <>
@@ -171,10 +177,10 @@ export function ProjectContentClient({
       </div>
 
       {/* Videos Grid */}
-      {videos.length > 0 ? (
+      {localVideos.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {sortedVideos.map((video) => (
-            <VideoCard key={video.id} video={video} projectId={projectId} />
+            <VideoCard key={video.id} video={video} projectId={projectId} onDeleted={handleVideoDeleted} />
           ))}
         </div>
       ) : (

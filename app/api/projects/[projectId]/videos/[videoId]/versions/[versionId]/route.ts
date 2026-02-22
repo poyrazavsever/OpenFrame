@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
+import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string; versionId: string }> };
@@ -124,6 +125,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         }
 
         const wasActive = result.version.isActive;
+
+        // Delete Bunny provider asset for this version before DB deletion.
+        await cleanupBunnyStreamVideos([{
+            providerId: result.version.providerId,
+            videoId: result.version.videoId,
+        }]);
 
         // Delete the version (cascades to comments)
         await db.videoVersion.delete({ where: { id: versionId } });

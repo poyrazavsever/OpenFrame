@@ -2,8 +2,12 @@ import { Metadata } from 'next';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
-import { getCachedUserMediaStorage } from '@/lib/admin-stats';
-import { HardDrive } from 'lucide-react';
+import {
+    getCachedBunnyStorageStats,
+    getCachedUserBunnyStorage,
+    getCachedUserMediaStorage
+} from '@/lib/admin-stats';
+import { Film, HardDrive } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import {
@@ -70,13 +74,40 @@ export default async function AdminUsersPage({
 
     const totalPages = Math.ceil(totalUsers / pageSize);
 
-    // Determine media storage per user (Cached)
-    const userStorage = await getCachedUserMediaStorage();
+    // Determine per-user storage usage (cached)
+    const [userStorage, userBunnyStorage, bunnyStorageStats] = await Promise.all([
+        getCachedUserMediaStorage(),
+        getCachedUserBunnyStorage(),
+        getCachedBunnyStorageStats(),
+    ]);
 
     return (
         <div className="flex-1 space-y-4 px-4 md:px-8">
             <div className="flex items-center justify-between space-y-2">
                 <h2 className="text-3xl font-bold tracking-tight">Users</h2>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Bunny Stream Storage</CardTitle>
+                        <Film className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{formatBytes(bunnyStorageStats.totalBytes)}</div>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Cloudflare R2 Media Storage</CardTitle>
+                        <HardDrive className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">
+                            {formatBytes(Object.values(userStorage).reduce((sum, item) => sum + item.total, 0))}
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
 
             <Card>
@@ -96,13 +127,14 @@ export default async function AdminUsersPage({
                                     <TableHead className="text-center">Workspaces Owned</TableHead>
                                     <TableHead className="text-center">Projects Owned</TableHead>
                                     <TableHead className="text-center">Total Comments</TableHead>
+                                    <TableHead className="text-right">Bunny Upload</TableHead>
                                     <TableHead className="text-right">Media Storage</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {users.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="h-24 text-center">
+                                        <TableCell colSpan={7} className="h-24 text-center">
                                             No users found.
                                         </TableCell>
                                     </TableRow>
@@ -121,6 +153,9 @@ export default async function AdminUsersPage({
                                             <TableCell className="text-center">{user._count.ownedWorkspaces}</TableCell>
                                             <TableCell className="text-center">{user._count.projects}</TableCell>
                                             <TableCell className="text-center">{user._count.comments}</TableCell>
+                                            <TableCell className="text-right text-sm font-medium">
+                                                {formatBytes(userBunnyStorage[user.id] || 0)}
+                                            </TableCell>
                                             <TableCell className="text-right text-sm">
                                                 <div className="flex flex-col items-end">
                                                     <span className="font-medium text-foreground">{formatBytes(userStorage[user.id]?.total || 0)}</span>

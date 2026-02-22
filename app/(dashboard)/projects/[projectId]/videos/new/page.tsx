@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { parseVideoUrl, fetchVideoMetadata, getThumbnailUrl, type VideoSource } from '@/lib/video-providers';
 import * as tus from 'tus-js-client';
 
@@ -32,12 +32,100 @@ export default function NewVideoPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState('');
+  const [pendingBunnyVideoId, setPendingBunnyVideoId] = useState<string | null>(null);
+  const [pendingBunnyUploadToken, setPendingBunnyUploadToken] = useState<string | null>(null);
+  const pendingBunnyVideoIdRef = useRef<string | null>(null);
+  const pendingBunnyUploadTokenRef = useRef<string | null>(null);
+  const activeTusUploadRef = useRef<tus.Upload | null>(null);
 
   const [submitError, setSubmitError] = useState('');
   const [formData, setFormData] = useState({
     title: '',
     description: '',
   });
+  const isUploadingFile = isLoading && uploadMode === 'file';
+  const leaveWarningMessage = 'A video upload is in progress. Leaving this page will interrupt it. Do you want to leave?';
+
+  useEffect(() => {
+    pendingBunnyVideoIdRef.current = pendingBunnyVideoId;
+  }, [pendingBunnyVideoId]);
+
+  useEffect(() => {
+    pendingBunnyUploadTokenRef.current = pendingBunnyUploadToken;
+  }, [pendingBunnyUploadToken]);
+
+  const cleanupPendingBunnyVideo = useCallback(async (videoId: string, uploadToken: string, keepalive = false) => {
+    try {
+      await fetch(`/api/projects/${projectId}/videos/bunny-init`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId, uploadToken }),
+        keepalive,
+      });
+    } catch (error) {
+      console.error('Failed to cleanup pending Bunny upload:', error);
+    } finally {
+      if (pendingBunnyVideoIdRef.current === videoId) {
+        pendingBunnyVideoIdRef.current = null;
+        setPendingBunnyVideoId(null);
+      }
+      if (pendingBunnyUploadTokenRef.current === uploadToken) {
+        pendingBunnyUploadTokenRef.current = null;
+        setPendingBunnyUploadToken(null);
+      }
+    }
+  }, [projectId]);
+
+  const abortAndCleanupPendingUpload = useCallback((keepalive = false) => {
+    const pendingVideoId = pendingBunnyVideoIdRef.current;
+    const pendingUploadToken = pendingBunnyUploadTokenRef.current;
+    if (!pendingVideoId || !pendingUploadToken) return;
+
+    if (activeTusUploadRef.current) {
+      try {
+        activeTusUploadRef.current.abort(true);
+      } catch {
+        // Ignore abort failures; we'll still attempt cleanup.
+      } finally {
+        activeTusUploadRef.current = null;
+      }
+    }
+
+    void cleanupPendingBunnyVideo(pendingVideoId, pendingUploadToken, keepalive);
+  }, [cleanupPendingBunnyVideo]);
+
+  useEffect(() => {
+    if (!isUploadingFile) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    const handlePageHide = () => {
+      abortAndCleanupPendingUpload(true);
+    };
+
+    const handlePopState = () => {
+      const shouldLeave = window.confirm(leaveWarningMessage);
+      if (!shouldLeave) {
+        window.history.pushState(null, '', window.location.href);
+        return;
+      }
+      abortAndCleanupPendingUpload(true);
+    };
+
+    window.history.pushState(null, '', window.location.href);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [abortAndCleanupPendingUpload, isUploadingFile]);
 
   // Auto-fetch metadata when a valid video source is detected
   useEffect(() => {
@@ -102,7 +190,9 @@ export default function NewVideoPage() {
     }
   };
 
-  const uploadToBunny = async (file: File): Promise<{ videoId: string; libraryId: string; providerId: string; url: string }> => {
+  const uploadToBunny = async (
+    file: File
+  ): Promise<{ videoId: string; libraryId: string; providerId: string; url: string; uploadToken: string }> => {
     // 1. Initialize Bunny Stream upload (creates video & gets signature)
     setUploadStatus('Initializing upload...');
     const initRes = await fetch(`/api/projects/${projectId}/videos/bunny-init`, {
@@ -116,7 +206,11 @@ export default function NewVideoPage() {
       throw new Error(data.error || 'Failed to initialize upload');
     }
 
-    const { data: { videoId, libraryId, signature, expirationTime } } = await initRes.json();
+    const { data: { videoId, libraryId, signature, expirationTime, uploadToken } } = await initRes.json();
+    setPendingBunnyVideoId(videoId);
+    setPendingBunnyUploadToken(uploadToken);
+    pendingBunnyVideoIdRef.current = videoId;
+    pendingBunnyUploadTokenRef.current = uploadToken;
 
     // 2. Upload via TUS
     return new Promise((resolve, reject) => {
@@ -135,6 +229,7 @@ export default function NewVideoPage() {
           title: formData.title || file.name,
         },
         onError: (error) => {
+          activeTusUploadRef.current = null;
           reject(new Error('Upload failed: ' + error.message));
         },
         onProgress: (bytesUploaded, bytesTotal) => {
@@ -143,15 +238,18 @@ export default function NewVideoPage() {
           setUploadStatus(`Uploading... ${percentage}%`);
         },
         onSuccess: () => {
+          activeTusUploadRef.current = null;
           setUploadStatus('Processing video...');
           resolve({
             videoId,
             libraryId,
             providerId: 'bunny',
-            url: `https://iframe.mediadelivery.net/embed/${libraryId}/${videoId}`
+            url: `https://iframe.mediadelivery.net/embed/${libraryId}/${videoId}`,
+            uploadToken,
           });
         },
       });
+      activeTusUploadRef.current = upload;
       upload.start();
     });
   };
@@ -165,8 +263,10 @@ export default function NewVideoPage() {
     setUploadProgress(0);
 
     try {
+      let uploadedBunnyVideoId: string | null = null;
+      let uploadedBunnyUploadToken: string | null = null;
       let finalTitle = formData.title.trim();
-      let finalDescription = formData.description.trim() || null;
+      const finalDescription = formData.description.trim() || null;
       let finalVideoUrl = '';
       let finalProviderId = '';
       let finalVideoId = '';
@@ -195,6 +295,8 @@ export default function NewVideoPage() {
 
         // Handle TUS Upload
         const bunnyData = await uploadToBunny(selectedFile);
+        uploadedBunnyVideoId = bunnyData.videoId;
+        uploadedBunnyUploadToken = bunnyData.uploadToken;
 
         finalVideoUrl = bunnyData.url;
         finalProviderId = bunnyData.providerId;
@@ -216,20 +318,32 @@ export default function NewVideoPage() {
           videoId: finalVideoId,
           thumbnailUrl: finalThumbnailUrl,
           duration: finalDuration,
+          uploadToken: uploadedBunnyUploadToken,
         }),
       });
 
       if (!response.ok) {
         const data = await response.json();
         setSubmitError(data.error || 'Failed to add video');
+        if (uploadedBunnyVideoId && uploadedBunnyUploadToken) {
+          await cleanupPendingBunnyVideo(uploadedBunnyVideoId, uploadedBunnyUploadToken);
+        }
         return;
       }
 
+      pendingBunnyVideoIdRef.current = null;
+      pendingBunnyUploadTokenRef.current = null;
+      setPendingBunnyVideoId(null);
+      setPendingBunnyUploadToken(null);
       router.push(`/projects/${projectId}`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to add video:', error);
-      setSubmitError(error.message || 'An unexpected error occurred');
+      setSubmitError(error instanceof Error ? error.message : 'An unexpected error occurred');
+      if (pendingBunnyVideoIdRef.current && pendingBunnyUploadTokenRef.current) {
+        await cleanupPendingBunnyVideo(pendingBunnyVideoIdRef.current, pendingBunnyUploadTokenRef.current);
+      }
     } finally {
+      activeTusUploadRef.current = null;
       setIsLoading(false);
     }
   };
@@ -242,6 +356,15 @@ export default function NewVideoPage() {
         <Link
           href={`/projects/${projectId}`}
           className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+          onClick={(event) => {
+            if (!isUploadingFile) return;
+            const shouldLeave = window.confirm(leaveWarningMessage);
+            if (!shouldLeave) {
+              event.preventDefault();
+              return;
+            }
+            abortAndCleanupPendingUpload(true);
+          }}
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
           Back to Project
@@ -256,10 +379,10 @@ export default function NewVideoPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs value={uploadMode} onValueChange={(v) => setUploadMode(v as 'url' | 'file')} className="mb-6">
+          <Tabs value={uploadMode} onValueChange={(v) => !isLoading && setUploadMode(v as 'url' | 'file')} className="mb-6">
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="url">Paste URL</TabsTrigger>
-              <TabsTrigger value="file">Direct Upload</TabsTrigger>
+              <TabsTrigger value="url" disabled={isLoading}>Paste URL</TabsTrigger>
+              <TabsTrigger value="file" disabled={isLoading}>Direct Upload</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -384,6 +507,11 @@ export default function NewVideoPage() {
                   <div className="w-full bg-secondary rounded-full h-2">
                     <div className="bg-primary h-2 rounded-full transition-all" style={{ width: `${uploadProgress}%` }}></div>
                   </div>
+                )}
+                {isUploadingFile && (
+                  <p className="text-xs text-amber-500">
+                    Do not close, refresh, or navigate away while the upload is in progress.
+                  </p>
                 )}
               </div>
             )}

@@ -55,9 +55,10 @@ interface VideoCardProps {
     lastUpdated: string;
   };
   projectId: string;
+  onDeleted?: (videoId: string) => void;
 }
 
-export function VideoCard({ video, projectId }: VideoCardProps) {
+export function VideoCard({ video, projectId, onDeleted }: VideoCardProps) {
   const router = useRouter();
   const [imgError, setImgError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -165,8 +166,7 @@ export function VideoCard({ video, projectId }: VideoCardProps) {
       });
       if (res.ok) {
         setShowDeleteDialog(false);
-        // Give revalidatePath time to invalidate cache before refreshing
-        await new Promise((r) => setTimeout(r, 300));
+        onDeleted?.(video.id);
         router.refresh();
       }
     } catch (err) {
@@ -193,8 +193,7 @@ export function VideoCard({ video, projectId }: VideoCardProps) {
                 src={`${video.thumbnailUrl?.replace('vz-thumbnail.b-cdn.net', 'vz-965f4f4a-fc1.b-cdn.net')}${retryKey ? `?t=${retryKey}` : ''}`}
                 alt={video.title}
                 className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
-                onError={(e) => {
-                  console.error('Thumbnail failed to load. Tried:', (e.target as HTMLImageElement).currentSrc);
+                onError={() => {
                   setImgError(true);
                   // Check again after 10 seconds in case Bunny is still processing
                   setTimeout(() => {

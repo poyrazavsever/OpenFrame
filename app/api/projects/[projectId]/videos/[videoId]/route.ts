@@ -5,6 +5,7 @@ import { auth, checkProjectAccess } from '@/lib/auth';
 import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
 import { cleanupVideoMediaFiles } from '@/lib/r2-cleanup';
+import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string }> };
@@ -200,6 +201,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const video = await db.video.findFirst({
             where: { id: videoId, projectId },
             include: {
+                versions: {
+                    select: {
+                        providerId: true,
+                        videoId: true,
+                    },
+                },
                 project: {
                     include: {
                         members: { where: { userId: session.user.id } },
@@ -228,6 +235,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         if (!canDelete) {
             return apiErrors.forbidden('Only project owner or admin can delete videos');
         }
+
+        // Delete Bunny provider videos first to avoid orphaned assets.
+        await cleanupBunnyStreamVideos(video.versions);
 
         // Clean up voice files from R2 before cascade delete removes comment rows
         await cleanupVideoMediaFiles(videoId);

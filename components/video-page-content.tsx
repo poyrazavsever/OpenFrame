@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { List } from 'react-window';
+import Hls, { type Level } from 'hls.js';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -173,7 +174,25 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+function formatBunnyQualityLabel(level: { height?: number; bitrate?: number }, index: number): string {
+  if (typeof level.height === 'number' && level.height > 0) {
+    return `${level.height}p`;
+  }
+  if (typeof level.bitrate === 'number' && level.bitrate > 0) {
+    return `${Math.round(level.bitrate / 1000)} kbps`;
+  }
+  return `Level ${index + 1}`;
+}
+
 const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const BUNNY_PULL_ZONE_HOSTNAME = 'vz-965f4f4a-fc1.b-cdn.net';
+
+interface BunnyQualityOption {
+  level: number;
+  label: string;
+}
+
+type BunnyPlaybackState = 'none' | 'processing' | 'error';
 
 export type VideoPageMode = 'dashboard' | 'watch';
 
@@ -185,6 +204,9 @@ interface VideoPageContentProps {
 
 export function VideoPageContent({ mode, videoId, projectId: propProjectId }: VideoPageContentProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const bunnyViewportRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const playerRef = useRef<YT.Player | PlayerAdapter | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -194,12 +216,18 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [error, setError] = useState('');
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [bunnyPlaybackState, setBunnyPlaybackState] = useState<BunnyPlaybackState>('none');
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [qualityOptions, setQualityOptions] = useState<BunnyQualityOption[]>([]);
+  const [selectedQualityLevel, setSelectedQualityLevel] = useState<number>(-1);
+  const [isBunnyPortraitSource, setIsBunnyPortraitSource] = useState(false);
+  const [bunnyPortraitFrameWidth, setBunnyPortraitFrameWidth] = useState<number>(0);
   const [cursorIdle, setCursorIdle] = useState(false);
   const cursorIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPathnameRef = useRef<string>(pathname);
@@ -231,6 +259,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const progressSaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSavedProgressRef = useRef<number>(0);
+  const bunnyRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fullscreen state
   const [isFullscreenMode, setIsFullscreenMode] = useState(false);
@@ -278,6 +307,27 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [showCompareDialog, setShowCompareDialog] = useState(false);
   const [selectedCompareVersions, setSelectedCompareVersions] = useState<Set<string>>(new Set());
   const router = useRouter();
+
+  useEffect(() => {
+    isDraggingRef.current = isDragging;
+  }, [isDragging]);
+
+  useEffect(() => {
+    const viewportEl = bunnyViewportRef.current;
+    if (!viewportEl || typeof ResizeObserver === 'undefined') return;
+
+    const updateFrameWidth = () => {
+      const viewportWidth = viewportEl.clientWidth;
+      const viewportHeight = viewportEl.clientHeight;
+      if (viewportWidth <= 0 || viewportHeight <= 0) return;
+      setBunnyPortraitFrameWidth(Math.min(viewportWidth, viewportHeight * (9 / 16)));
+    };
+
+    updateFrameWidth();
+    const observer = new ResizeObserver(updateFrameWidth);
+    observer.observe(viewportEl);
+    return () => observer.disconnect();
+  }, [activeVersionId]);
 
   useEffect(() => {
     const saved = localStorage.getItem('openframe_guest_name');
@@ -413,9 +463,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       return `https://www.youtube.com/embed/${activeVersion.videoId}?enablejsapi=1&rel=0&modestbranding=1&controls=0&showinfo=0&iv_load_policy=3&disablekb=1`;
     }
     if (activeVersion.providerId === 'bunny') {
-      // Force /embed/ endpoint to ensure player.js integration works correctly and hide native controls
-      const url = activeVersion.originalUrl.replace('/play/', '/embed/');
-      return `${url}${url.includes('?') ? '&' : '?'}autoplay=false&controls=false`;
+      return `https://${BUNNY_PULL_ZONE_HOSTNAME}/${activeVersion.videoId}/playlist.m3u8`;
     }
     try {
       const url = new URL(activeVersion.originalUrl);
@@ -427,6 +475,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       return '';
     }
   }, [activeVersion]);
+
+  const selectedQualityLabel = useMemo(() => {
+    if (selectedQualityLevel === -1) return 'Auto';
+    return qualityOptions.find((option) => option.level === selectedQualityLevel)?.label ?? 'Auto';
+  }, [qualityOptions, selectedQualityLevel]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -477,29 +530,32 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     if (!isYoutube && !isBunny) return;
 
     setIsReady(false);
+    setBunnyPlaybackState('none');
     setCurrentTime(0);
     setVideoDuration(0);
     setIsPlaying(false);
+    setIsMuted(false);
     setPlaybackSpeed(1);
+    setQualityOptions([]);
+    setSelectedQualityLevel(-1);
+    setIsBunnyPortraitSource(false);
 
     if (playerRef.current) {
-      if (isYoutube) {
-        try { playerRef.current.destroy(); } catch { /* ignore */ }
-      } else if (isBunny && 'off' in playerRef.current) {
-        try {
-          (playerRef.current as PlayerAdapter).off?.('ready');
-          (playerRef.current as PlayerAdapter).off?.('play');
-          (playerRef.current as PlayerAdapter).off?.('pause');
-          (playerRef.current as PlayerAdapter).off?.('timeupdate');
-        } catch { /* ignore */ }
-      }
+      try { playerRef.current.destroy(); } catch { /* ignore */ }
       playerRef.current = null;
+    }
+    if (hlsRef.current) {
+      try { hlsRef.current.destroy(); } catch { /* ignore */ }
+      hlsRef.current = null;
+    }
+    if (bunnyRetryTimerRef.current) {
+      clearTimeout(bunnyRetryTimerRef.current);
+      bunnyRetryTimerRef.current = null;
     }
 
     const initPlayer = () => {
-      if (!iframeRef.current) return;
-
       if (isYoutube) {
+        if (!iframeRef.current) return;
         playerRef.current = new YT.Player(iframeRef.current, {
           events: {
             onReady: (event: YT.PlayerEvent) => {
@@ -535,84 +591,241 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           },
         });
       } else if (isBunny) {
-        // dynamically require player.js to avoid SSR window errors
-        const playerjs = require('player.js');
-        const player = new playerjs.Player(iframeRef.current);
-        playerRef.current = player;
+        const videoEl = videoRef.current;
+        if (!videoEl) return;
 
-        player.on('ready', () => {
+        let cachedDuration = 0;
+        let destroyed = false;
+        let retryAttempt = 0;
+        let usingHlsJs = false;
+        let hlsInstance: Hls | null = null;
+        const clearRetryTimer = () => {
+          if (bunnyRetryTimerRef.current) {
+            clearTimeout(bunnyRetryTimerRef.current);
+            bunnyRetryTimerRef.current = null;
+          }
+        };
+        const scheduleRetry = (retryFn: () => void) => {
+          clearRetryTimer();
+          bunnyRetryTimerRef.current = setTimeout(() => {
+            if (!destroyed) {
+              retryFn();
+            }
+          }, 3000);
+        };
+        const getRetryUrl = () => {
+          retryAttempt += 1;
+          const separator = embedUrl.includes('?') ? '&' : '?';
+          return `${embedUrl}${separator}retry=${Date.now()}-${retryAttempt}`;
+        };
+        const retryNativeLoad = () => {
+          videoEl.src = getRetryUrl();
+          videoEl.load();
+        };
+        const retryHlsLoad = () => {
+          if (destroyed || !hlsInstance) return;
+          const retryUrl = getRetryUrl();
+          try {
+            hlsInstance.stopLoad();
+          } catch {
+            // ignore stop-load failures and continue with a fresh loadSource
+          }
+          hlsInstance.loadSource(retryUrl);
+          hlsInstance.startLoad(-1);
+        };
+
+        const syncDuration = () => {
+          if (Number.isFinite(videoEl.duration) && videoEl.duration > 0) {
+            cachedDuration = videoEl.duration;
+            setVideoDuration(videoEl.duration);
+          }
+        };
+
+        const saveProgress = () => {
+          const current = videoEl.currentTime || 0;
+          const duration = Number.isFinite(videoEl.duration) && videoEl.duration > 0 ? videoEl.duration : cachedDuration;
+          if (video?.isAuthenticated && current > 0 && activeVersionId) {
+            fetch(`/api/watch/${videoId}/progress`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                progress: current,
+                duration,
+                versionId: activeVersionId,
+              }),
+            }).catch((err) => console.error('Error saving watch progress on pause:', err));
+          }
+        };
+
+        const onLoadedMetadata = () => {
+          if (destroyed) return;
+          clearRetryTimer();
+          setBunnyPlaybackState('none');
+          if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+            setIsBunnyPortraitSource(videoEl.videoHeight > videoEl.videoWidth);
+          }
           setIsReady(true);
-          player.getDuration((duration: number) => {
-            if (duration > 0) setVideoDuration(duration);
-          });
-        });
+          syncDuration();
+        };
 
-        player.on('play', () => {
+        const onPlay = () => {
           setIsPlaying(true);
-          player.getDuration((duration: number) => {
-            if (duration > 0) setVideoDuration(duration);
-          });
-        });
+          setBunnyPlaybackState('none');
+          syncDuration();
+        };
 
-        player.on('pause', () => {
+        const onPause = () => {
           setIsPlaying(false);
-          player.getCurrentTime((currentTime: number) => {
-            player.getDuration((duration: number) => {
-              if (video?.isAuthenticated && currentTime > 0 && activeVersionId) {
-                fetch(`/api/watch/${videoId}/progress`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    progress: currentTime,
-                    duration: duration,
-                    versionId: activeVersionId,
-                  }),
-                }).catch(console.error);
-              }
-            });
+          saveProgress();
+        };
+
+        const onEnded = () => {
+          setIsPlaying(false);
+          saveProgress();
+        };
+
+        const onTimeUpdate = () => {
+          if (!isDraggingRef.current) {
+            setCurrentTime(videoEl.currentTime || 0);
+          }
+          if (Number.isFinite(videoEl.duration) && videoEl.duration > 0 && videoEl.duration !== cachedDuration) {
+            cachedDuration = videoEl.duration;
+            setVideoDuration(videoEl.duration);
+          }
+        };
+        const onVideoError = () => {
+          if (destroyed) return;
+          if (usingHlsJs) return;
+          if (videoEl.readyState >= HTMLMediaElement.HAVE_METADATA) {
+            setBunnyPlaybackState('error');
+            return;
+          }
+          setIsReady(false);
+          setBunnyPlaybackState('processing');
+          scheduleRetry(retryNativeLoad);
+        };
+
+        videoEl.addEventListener('loadedmetadata', onLoadedMetadata);
+        videoEl.addEventListener('play', onPlay);
+        videoEl.addEventListener('pause', onPause);
+        videoEl.addEventListener('ended', onEnded);
+        videoEl.addEventListener('timeupdate', onTimeUpdate);
+        videoEl.addEventListener('error', onVideoError);
+
+        const configureHlsLevels = (levels: Level[]) => {
+          setQualityOptions(levels.map((level, index) => ({
+            level: index,
+            label: formatBunnyQualityLabel(level, index),
+          })));
+          setSelectedQualityLevel(-1);
+        };
+
+        if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+          videoEl.src = embedUrl;
+          videoEl.load();
+        } else if (Hls.isSupported()) {
+          usingHlsJs = true;
+          const hls = new Hls();
+          hlsInstance = hls;
+          hlsRef.current = hls;
+          hls.attachMedia(videoEl);
+
+          hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+            if (!destroyed) {
+              hls.loadSource(embedUrl);
+            }
           });
-        });
 
-        let cachedTime = 0;
-        let cachedDuration = videoDuration || 0;
+          hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+            if (destroyed) return;
+            clearRetryTimer();
+            setBunnyPlaybackState('none');
+            configureHlsLevels(data.levels);
+            setIsReady(true);
+            syncDuration();
+          });
 
-        player.on('timeupdate', (data: { seconds: number, duration: number }) => {
-          cachedTime = data.seconds;
-          if (data.duration > 0 && data.duration !== cachedDuration) {
-            cachedDuration = data.duration;
-            setVideoDuration(data.duration);
-          }
-          if (!isDragging) {
-            setCurrentTime(data.seconds);
-          }
-        });
+          hls.on(Hls.Events.ERROR, (_, data) => {
+            if (destroyed) return;
+            const responseCode = (data as { response?: { code?: number } }).response?.code;
+            const isManifestLoadFailure = data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR
+              || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
+            const hasProcessingLikeStatus = responseCode === undefined
+              || responseCode === 0
+              || responseCode === 403
+              || responseCode === 404
+              || responseCode === 423
+              || responseCode === 429
+              || responseCode === 503;
+            const isLikelyProcessing = isManifestLoadFailure
+              && hasProcessingLikeStatus;
+            const isNetworkPreMetadataProcessing = data.type === Hls.ErrorTypes.NETWORK_ERROR
+              && hasProcessingLikeStatus
+              && videoEl.readyState < HTMLMediaElement.HAVE_METADATA;
+            const isUnknownPreMetadataProcessing = !data.details
+              && !data.type
+              && videoEl.readyState < HTMLMediaElement.HAVE_METADATA;
+            if (isLikelyProcessing || isNetworkPreMetadataProcessing || isUnknownPreMetadataProcessing) {
+              setIsReady(false);
+              setBunnyPlaybackState('processing');
+              scheduleRetry(retryHlsLoad);
+              return;
+            }
+
+            if (data.fatal) {
+              setBunnyPlaybackState('error');
+              console.error('Fatal HLS error:', data);
+            }
+          });
+        } else {
+          setBunnyPlaybackState('error');
+          console.error('HLS is not supported in this browser.');
+        }
 
         playerRef.current = {
-          playVideo: () => player.play(),
-          pauseVideo: () => player.pause(),
-          seekTo: (time: number) => { player.setCurrentTime(time); },
-          mute: () => player.mute(),
-          unMute: () => player.unmute(),
-          isMuted: () => false,
-          getCurrentTime: () => cachedTime,
-          getDuration: () => cachedDuration,
-          getPlayerState: () => window.YT?.PlayerState?.PLAYING || 1,
+          playVideo: () => {
+            videoEl.play().catch((err) => console.error('Error playing Bunny video:', err));
+          },
+          pauseVideo: () => videoEl.pause(),
+          seekTo: (time: number) => {
+            videoEl.currentTime = time;
+          },
+          mute: () => {
+            videoEl.muted = true;
+          },
+          unMute: () => {
+            videoEl.muted = false;
+          },
+          isMuted: () => videoEl.muted,
+          getCurrentTime: () => videoEl.currentTime || 0,
+          getDuration: () => {
+            if (Number.isFinite(videoEl.duration) && videoEl.duration > 0) return videoEl.duration;
+            return cachedDuration;
+          },
+          getPlayerState: () => (
+            videoEl.paused
+              ? (window.YT?.PlayerState?.PAUSED ?? 2)
+              : (window.YT?.PlayerState?.PLAYING ?? 1)
+          ),
           setPlaybackRate: (rate: number) => {
-            try {
-              if (player && typeof player.setPlaybackRate === 'function') {
-                player.setPlaybackRate(rate);
-              }
-            } catch (e) { console.error('Error setting playback rate on Bunny Stream', e); }
+            videoEl.playbackRate = rate;
           },
           destroy: () => {
-            try {
-              player.off('ready');
-              player.off('play');
-              player.off('pause');
-              player.off('timeupdate');
-            } catch { }
+            destroyed = true;
+            clearRetryTimer();
+            videoEl.removeEventListener('loadedmetadata', onLoadedMetadata);
+            videoEl.removeEventListener('play', onPlay);
+            videoEl.removeEventListener('pause', onPause);
+            videoEl.removeEventListener('ended', onEnded);
+            videoEl.removeEventListener('timeupdate', onTimeUpdate);
+            videoEl.removeEventListener('error', onVideoError);
+            if (hlsRef.current) {
+              try { hlsRef.current.destroy(); } catch { /* ignore */ }
+              hlsRef.current = null;
+            }
+            videoEl.removeAttribute('src');
+            videoEl.load();
           },
-          off: (event: string) => player.off(event)
         };
       }
     };
@@ -634,8 +847,20 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       if (isYoutube) {
         window.onYouTubeIframeAPIReady = undefined;
       }
+      if (playerRef.current) {
+        try { playerRef.current.destroy(); } catch { /* ignore */ }
+        playerRef.current = null;
+      }
+      if (hlsRef.current) {
+        try { hlsRef.current.destroy(); } catch { /* ignore */ }
+        hlsRef.current = null;
+      }
+      if (bunnyRetryTimerRef.current) {
+        clearTimeout(bunnyRetryTimerRef.current);
+        bunnyRetryTimerRef.current = null;
+      }
     };
-  }, [activeVersionId, isApiLoaded, video?.isAuthenticated, videoId]);
+  }, [activeVersionId, embedUrl, isApiLoaded, video?.isAuthenticated, videoId]);
 
   // Save detected duration to DB if the version doesn't have one stored
   useEffect(() => {
@@ -713,9 +938,6 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
     // Save progress every 5 seconds while playing
     progressSaveTimerRef.current = setInterval(() => {
-      const isYoutube = activeVersion?.providerId === 'youtube';
-      const isBunny = activeVersion?.providerId === 'bunny';
-
       const save = (playerCurrentTime: number, playerDuration: number) => {
         if (playerCurrentTime > 0 && Math.abs(playerCurrentTime - lastSavedProgressRef.current) >= 2) {
           fetch(`/api/watch/${videoId}/progress`, {
@@ -861,6 +1083,24 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
         return;
       }
+      const isBunnyBlocked = activeVersion?.providerId === 'bunny' && bunnyPlaybackState !== 'none';
+      const isPlaybackControlKey = [
+        'Space',
+        'KeyK',
+        'ArrowLeft',
+        'ArrowRight',
+        'ArrowUp',
+        'ArrowDown',
+        'Comma',
+        'Period',
+        'KeyM',
+        'KeyJ',
+        'KeyL',
+      ].includes(e.code);
+      if (isBunnyBlocked && isPlaybackControlKey) {
+        e.preventDefault();
+        return;
+      }
 
       switch (e.code) {
         case 'Space':
@@ -978,16 +1218,17 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, currentTime, duration, isMuted, playbackSpeed, toggleFullscreen]);
+  }, [activeVersion?.providerId, bunnyPlaybackState, isPlaying, currentTime, duration, isMuted, playbackSpeed, toggleFullscreen]);
 
   const handlePlayPause = useCallback(() => {
+    if (activeVersion?.providerId === 'bunny' && bunnyPlaybackState !== 'none') return;
     if (!playerRef.current) return;
     if (isPlaying) {
       playerRef.current.pauseVideo();
     } else {
       playerRef.current.playVideo();
     }
-  }, [isPlaying]);
+  }, [activeVersion?.providerId, bunnyPlaybackState, isPlaying]);
 
   const handleSeekToTimestamp = useCallback((timestamp: number, annotation?: string | null) => {
     setCurrentTime(timestamp);
@@ -1033,6 +1274,22 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     },
     []
   );
+
+  const handleQualityChange = useCallback((level: number) => {
+    const hls = hlsRef.current;
+    if (!hls) return;
+
+    if (level === -1) {
+      hls.currentLevel = -1;
+      hls.nextLevel = -1;
+      setSelectedQualityLevel(-1);
+      return;
+    }
+
+    hls.currentLevel = level;
+    hls.nextLevel = level;
+    setSelectedQualityLevel(level);
+  }, []);
 
   const handleTimelineClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1963,6 +2220,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     setIsCreatingVersion(true);
     setNewVersionUploadStatus('');
     setNewVersionUploadProgress(0);
+    let uploadedBunnyVideoId: string | null = null;
+    let uploadedBunnyUploadToken: string | null = null;
 
     try {
       let finalVideoUrl = '';
@@ -1996,7 +2255,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         });
 
         if (!initRes.ok) throw new Error('Failed to initialize upload');
-        const { data: { videoId, libraryId, signature, expirationTime } } = await initRes.json();
+        const { data: { videoId, libraryId, signature, expirationTime, uploadToken } } = await initRes.json();
+        uploadedBunnyVideoId = videoId;
+        uploadedBunnyUploadToken = uploadToken;
 
         await new Promise((resolve, reject) => {
           setNewVersionUploadStatus('Uploading video...');
@@ -2040,6 +2301,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           videoUrl: finalVideoUrl,
           providerId: finalProviderId,
           providerVideoId: finalProviderVideoId,
+          uploadToken: uploadedBunnyUploadToken,
           versionLabel: newVersionLabel.trim() || null,
           thumbnailUrl: finalThumbnailUrl,
           duration: finalDuration,
@@ -2047,30 +2309,42 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         }),
       });
 
-      if (res.ok) {
-        const versionData = await res.json();
-        const newVersion = versionData.data;
-        // Optimistically add the new version to local state instead of refetching
-        setVideo((prev) => {
-          if (!prev) return prev;
-          const updatedVersions = prev.versions.map(v => ({ ...v, isActive: false }));
-          const createdVersion = {
-            ...newVersion,
-            comments: [],
-          };
-          updatedVersions.unshift(createdVersion);
-          return { ...prev, versions: updatedVersions };
-        });
-        setActiveVersionId(newVersion.id);
-        setShowVersionDialog(false);
-        setNewVersionUrl('');
-        setNewVersionLabel('');
-        setNewVersionSource(null);
-        setNewVersionFile(null);
-        setNewVersionUploadStatus('');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to create version');
       }
+
+      const versionData = await res.json();
+      const newVersion = versionData.data;
+      // Optimistically add the new version to local state instead of refetching
+      setVideo((prev) => {
+        if (!prev) return prev;
+        const updatedVersions = prev.versions.map(v => ({ ...v, isActive: false }));
+        const createdVersion = {
+          ...newVersion,
+          comments: [],
+        };
+        updatedVersions.unshift(createdVersion);
+        return { ...prev, versions: updatedVersions };
+      });
+      setActiveVersionId(newVersion.id);
+      setShowVersionDialog(false);
+      setNewVersionUrl('');
+      setNewVersionLabel('');
+      setNewVersionSource(null);
+      setNewVersionFile(null);
+      setNewVersionUploadStatus('');
     } catch (err) {
       const errorObj = err as Error;
+      if (uploadedBunnyVideoId && uploadedBunnyUploadToken) {
+        await fetch(`/api/projects/${propProjectId}/videos/bunny-init`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId: uploadedBunnyVideoId, uploadToken: uploadedBunnyUploadToken }),
+        }).catch((cleanupError) => {
+          console.error('Failed to cleanup pending Bunny version upload:', cleanupError);
+        });
+      }
       console.error('Failed to create version:', errorObj);
       toast.error(errorObj.message || 'Failed to create version');
     } finally {
@@ -2120,6 +2394,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const backHref = mode === 'dashboard'
     ? `/projects/${propProjectId}`
     : (video?.projectId ? `/projects/${video.projectId}` : '/');
+  const isBunnyVersion = activeVersion?.providerId === 'bunny';
+  const showBunnyProcessingOverlay = isBunnyVersion && bunnyPlaybackState === 'processing';
+  const showBunnyErrorOverlay = isBunnyVersion && bunnyPlaybackState === 'error';
 
   if (loading) {
     return (
@@ -2530,20 +2807,48 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             onMouseLeave={handleVideoMouseLeave}
           >
             <div className={cn("relative w-full h-full", isFullscreenMode && "absolute inset-0")}>
-              <iframe
-                key={activeVersionId}
-                ref={iframeRef}
-                src={embedUrl}
-                width="100%"
-                height="100%"
-                className="absolute inset-0 w-full h-full border-0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
+              {activeVersion?.providerId === 'bunny' ? (
+                <div ref={bunnyViewportRef} className="absolute inset-0 flex items-center justify-center bg-black">
+                  <div
+                    className={cn(
+                      'relative flex items-center justify-center bg-black',
+                      isBunnyPortraitSource ? 'h-full overflow-hidden' : 'w-full h-full'
+                    )}
+                    style={isBunnyPortraitSource && bunnyPortraitFrameWidth > 0 ? { width: `${bunnyPortraitFrameWidth}px` } : undefined}
+                  >
+                    <video
+                      key={activeVersionId}
+                      ref={videoRef}
+                      className="w-full h-full object-contain border-0 bg-black"
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
+                        objectPosition: 'center',
+                        backgroundColor: 'black',
+                      }}
+                      preload="metadata"
+                      playsInline
+                    />
+                  </div>
+                </div>
+              ) : (
+                <iframe
+                  key={activeVersionId}
+                  ref={iframeRef}
+                  src={embedUrl}
+                  width="100%"
+                  height="100%"
+                  className="absolute inset-0 w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              )}
 
               <div
                 className={cn(
                   'absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity duration-300',
+                  (showBunnyProcessingOverlay || showBunnyErrorOverlay) && 'opacity-0 pointer-events-none',
                   isPlaying
                     ? cursorIdle ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'
                     : 'opacity-100'
@@ -2557,6 +2862,34 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                   )}
                 </div>
               </div>
+
+              {showBunnyProcessingOverlay && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/65">
+                  <div className="max-w-sm rounded-md border bg-background/95 px-4 py-3 text-center shadow-lg">
+                    <div className="mb-2 flex items-center justify-center gap-2 text-sm font-medium">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Video Is Processing
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      This video is still processing. We&apos;ll keep retrying every few seconds.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {showBunnyErrorOverlay && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/65">
+                  <div className="max-w-sm rounded-md border bg-background/95 px-4 py-3 text-center shadow-lg">
+                    <div className="mb-2 flex items-center justify-center gap-2 text-sm font-medium">
+                      <AlertCircle className="h-4 w-4 text-destructive" />
+                      Unable To Load Video
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      The Bunny stream is unavailable right now. Please refresh this page in a moment.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Resume playback prompt */}
               {showResumePrompt && savedProgress !== null && (
@@ -2683,6 +3016,34 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
               </span>
 
               <div className="ml-auto flex items-center">
+                {activeVersion?.providerId === 'bunny' && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs">
+                        Quality {selectedQualityLabel}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[120px]">
+                      <DropdownMenuItem
+                        onClick={() => handleQualityChange(-1)}
+                        className={cn(selectedQualityLevel === -1 && 'font-bold text-primary')}
+                      >
+                        Auto
+                      </DropdownMenuItem>
+                      {qualityOptions.length > 0 && <DropdownMenuSeparator />}
+                      {qualityOptions.map((option) => (
+                        <DropdownMenuItem
+                          key={option.level}
+                          onClick={() => handleQualityChange(option.level)}
+                          className={cn(option.level === selectedQualityLevel && 'font-bold text-primary')}
+                        >
+                          {option.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs">

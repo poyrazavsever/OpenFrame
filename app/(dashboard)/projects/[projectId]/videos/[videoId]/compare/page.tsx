@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import Hls from 'hls.js';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import {
@@ -98,6 +99,8 @@ const isSafeUrl = (url: string) => {
   }
 };
 
+const BUNNY_PULL_ZONE_HOSTNAME = 'vz-965f4f4a-fc1.b-cdn.net';
+
 export default function CompareVersionsPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -117,6 +120,8 @@ export default function CompareVersionsPage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [cursorIdle, setCursorIdle] = useState(false);
+  const cursorIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
 
   // Map of versionId -> YT.Player or Custom Adapter
@@ -306,6 +311,57 @@ export default function CompareVersionsPage() {
     setIsDragging(false);
     handleSeek(currentTime);
   }, [isDragging, currentTime, handleSeek]);
+
+  const handleVideoMouseMove = useCallback(() => {
+    setCursorIdle(false);
+    if (cursorIdleTimerRef.current) {
+      clearTimeout(cursorIdleTimerRef.current);
+    }
+
+    if (isPlaying) {
+      cursorIdleTimerRef.current = setTimeout(() => {
+        setCursorIdle(true);
+      }, 1000);
+    }
+  }, [isPlaying]);
+
+  const handleVideoMouseLeave = useCallback(() => {
+    if (cursorIdleTimerRef.current) {
+      clearTimeout(cursorIdleTimerRef.current);
+    }
+    setCursorIdle(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cursorIdleTimerRef.current) {
+        clearTimeout(cursorIdleTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (cursorIdleTimerRef.current) {
+      clearTimeout(cursorIdleTimerRef.current);
+      cursorIdleTimerRef.current = null;
+    }
+
+    if (!isPlaying) {
+      setCursorIdle(false);
+      return;
+    }
+
+    cursorIdleTimerRef.current = setTimeout(() => {
+      setCursorIdle(true);
+    }, 1000);
+
+    return () => {
+      if (cursorIdleTimerRef.current) {
+        clearTimeout(cursorIdleTimerRef.current);
+        cursorIdleTimerRef.current = null;
+      }
+    };
+  }, [isPlaying]);
 
   // Keyboard shortcuts (matching video page)
   useEffect(() => {
@@ -563,9 +619,12 @@ export default function CompareVersionsPage() {
               <div
                 className={cn(
                   'bg-black flex items-center justify-center relative cursor-pointer group',
+                  cursorIdle && isPlaying && 'cursor-none',
                   isCommentsOpen ? 'h-[55%]' : 'flex-1'
                 )}
                 onClick={handlePlayPause}
+                onMouseMove={handleVideoMouseMove}
+                onMouseLeave={handleVideoMouseLeave}
               >
                 {version.providerId === 'youtube' ? (
                   <YouTubePanel
@@ -595,7 +654,7 @@ export default function CompareVersionsPage() {
                 <div
                   className={cn(
                     'absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity duration-300 pointer-events-none',
-                    isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+                    isPlaying ? (cursorIdle ? 'opacity-0' : 'opacity-0 group-hover:opacity-100') : 'opacity-100'
                   )}
                 >
                   <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center">
@@ -798,7 +857,7 @@ function YouTubePanel({
   return <div ref={containerRef} className="w-full h-full pointer-events-none" />;
 }
 
-// Isolated Bunny Steam player component per panel filtering Player.js to YouTube wrapper interface
+// Isolated Bunny Stream player component per panel mapped to the shared adapter interface
 function BunnyPanel({
   version,
   onRegister,
@@ -808,86 +867,218 @@ function BunnyPanel({
   onRegister: (versionId: string, player: YT.Player | PlayerAdapter) => void;
   onUnregister: (versionId: string) => void;
 }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [portraitFrameWidth, setPortraitFrameWidth] = useState<number>(0);
+  const [isPortraitSource, setIsPortraitSource] = useState(false);
 
   useEffect(() => {
-    if (!iframeRef.current) return;
-    const playerjs = require('player.js');
-    const player = new playerjs.Player(iframeRef.current);
+    const panelEl = panelRef.current;
+    if (!panelEl || typeof ResizeObserver === 'undefined') return;
+
+    const updateFrameWidth = () => {
+      const panelWidth = panelEl.clientWidth;
+      const panelHeight = panelEl.clientHeight;
+      if (panelWidth <= 0 || panelHeight <= 0) return;
+      setPortraitFrameWidth(Math.min(panelWidth, panelHeight * (9 / 16)));
+    };
+
+    updateFrameWidth();
+    const observer = new ResizeObserver(updateFrameWidth);
+    observer.observe(panelEl);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
 
     let cachedTime = 0;
     let cachedDuration = 0;
     let isPlaying = false;
-    let isMuted = false;
+    let destroyed = false;
+    let retryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    player.on('ready', () => {
-      player.getDuration((d: number) => { cachedDuration = d; });
-
-      const adapter = {
-        playVideo: () => player.play(),
-        pauseVideo: () => player.pause(),
-        seekTo: (time: number) => { cachedTime = time; player.setCurrentTime(time); },
-        mute: () => { isMuted = true; player.mute(); },
-        unMute: () => { isMuted = false; player.unmute(); },
-        isMuted: () => isMuted,
-        getCurrentTime: () => cachedTime,
-        getDuration: () => cachedDuration,
-        getPlayerState: () => isPlaying ? window.YT?.PlayerState?.PLAYING : window.YT?.PlayerState?.PAUSED,
-        setPlaybackRate: (rate: number) => {
-          try {
-            if (player && typeof player.setPlaybackRate === 'function') {
-              player.setPlaybackRate(rate);
-            }
-          } catch (e) {
-            console.error('Failed to set playback rate', e);
-          }
-        },
-        destroy: () => {
-          try {
-            player.off('ready');
-            player.off('timeupdate');
-            player.off('play');
-            player.off('pause');
-            player.off('ended');
-          } catch { }
+    const clearRetryTimer = () => {
+      if (!retryTimer) return;
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    };
+    const getRetryUrl = (baseUrl: string) => {
+      retryAttempt += 1;
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      return `${baseUrl}${separator}retry=${Date.now()}-${retryAttempt}`;
+    };
+    const scheduleRetry = (retryFn: () => void) => {
+      clearRetryTimer();
+      retryTimer = setTimeout(() => {
+        if (!destroyed) {
+          retryFn();
         }
-      };
+      }, 3000);
+    };
 
-      onRegister(version.id, adapter);
-    });
+    const adapter: PlayerAdapter = {
+      playVideo: () => {
+        videoEl.play().catch((err) => console.error('Error playing Bunny panel video:', err));
+      },
+      pauseVideo: () => videoEl.pause(),
+      seekTo: (time: number) => {
+        cachedTime = time;
+        videoEl.currentTime = time;
+      },
+      mute: () => {
+        videoEl.muted = true;
+      },
+      unMute: () => {
+        videoEl.muted = false;
+      },
+      isMuted: () => videoEl.muted,
+      getCurrentTime: () => videoEl.currentTime || cachedTime,
+      getDuration: () => {
+        if (Number.isFinite(videoEl.duration) && videoEl.duration > 0) {
+          cachedDuration = videoEl.duration;
+        }
+        return cachedDuration;
+      },
+      getPlayerState: () => (
+        isPlaying
+          ? (window.YT?.PlayerState?.PLAYING ?? 1)
+          : (window.YT?.PlayerState?.PAUSED ?? 2)
+      ),
+      setPlaybackRate: (rate: number) => {
+        videoEl.playbackRate = rate;
+      },
+      destroy: () => {
+        destroyed = true;
+        clearRetryTimer();
+        videoEl.removeEventListener('timeupdate', onTimeUpdate);
+        videoEl.removeEventListener('play', onPlay);
+        videoEl.removeEventListener('pause', onPause);
+        videoEl.removeEventListener('ended', onEnded);
+        videoEl.removeEventListener('loadedmetadata', onLoadedMetadata);
+        if (hlsRef.current) {
+          try { hlsRef.current.destroy(); } catch { /* ignore */ }
+          hlsRef.current = null;
+        }
+        videoEl.removeAttribute('src');
+        videoEl.load();
+      },
+    };
 
-    player.on('timeupdate', (data: { seconds: number }) => { cachedTime = data.seconds; });
-    player.on('play', () => { isPlaying = true; });
-    player.on('pause', () => { isPlaying = false; });
-    player.on('ended', () => { isPlaying = false; });
+    const onLoadedMetadata = () => {
+      clearRetryTimer();
+      if (Number.isFinite(videoEl.duration) && videoEl.duration > 0) {
+        cachedDuration = videoEl.duration;
+      }
+      if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        setIsPortraitSource(videoEl.videoHeight > videoEl.videoWidth);
+      }
+    };
+    const onTimeUpdate = () => { cachedTime = videoEl.currentTime || 0; };
+    const onPlay = () => { isPlaying = true; };
+    const onPause = () => { isPlaying = false; };
+    const onEnded = () => { isPlaying = false; };
+
+    videoEl.addEventListener('loadedmetadata', onLoadedMetadata);
+    videoEl.addEventListener('timeupdate', onTimeUpdate);
+    videoEl.addEventListener('play', onPlay);
+    videoEl.addEventListener('pause', onPause);
+    videoEl.addEventListener('ended', onEnded);
+
+    const hlsUrl = `https://${BUNNY_PULL_ZONE_HOSTNAME}/${version.videoId}/playlist.m3u8`;
+    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = hlsUrl;
+      videoEl.load();
+    } else if (Hls.isSupported()) {
+      const hls = new Hls();
+      hlsRef.current = hls;
+      hls.attachMedia(videoEl);
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        if (!destroyed) {
+          hls.loadSource(hlsUrl);
+        }
+      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (destroyed) return;
+        clearRetryTimer();
+      });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (destroyed) return;
+        const responseCode = (data as { response?: { code?: number } }).response?.code;
+        const isManifestLoadFailure = data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR
+          || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
+        const hasProcessingLikeStatus = responseCode === undefined
+          || responseCode === 0
+          || responseCode === 403
+          || responseCode === 404
+          || responseCode === 423
+          || responseCode === 429
+          || responseCode === 503;
+        const isLikelyProcessing = isManifestLoadFailure && hasProcessingLikeStatus;
+        const isNetworkPreMetadataProcessing = data.type === Hls.ErrorTypes.NETWORK_ERROR
+          && hasProcessingLikeStatus
+          && videoEl.readyState < HTMLMediaElement.HAVE_METADATA;
+        const isUnknownPreMetadataProcessing = !data.details
+          && !data.type
+          && videoEl.readyState < HTMLMediaElement.HAVE_METADATA;
+
+        if (isLikelyProcessing || isNetworkPreMetadataProcessing || isUnknownPreMetadataProcessing) {
+          scheduleRetry(() => {
+            const retryUrl = getRetryUrl(hlsUrl);
+            try {
+              hls.stopLoad();
+            } catch {
+              // ignore stop-load failures; loadSource is the important part
+            }
+            hls.loadSource(retryUrl);
+            hls.startLoad(-1);
+          });
+          return;
+        }
+
+        if (data.fatal) {
+          console.error('Fatal HLS error in compare panel:', data);
+        }
+      });
+    } else {
+      console.error('HLS is not supported in this browser.');
+    }
+
+    onRegister(version.id, adapter);
 
     return () => {
       onUnregister(version.id);
-      try {
-        player.off('ready');
-        player.off('timeupdate');
-        player.off('play');
-        player.off('pause');
-        player.off('ended');
-      } catch { }
+      adapter.destroy();
     };
-  }, [version.id, onRegister, onUnregister]);
-
-  const src = version.originalUrl.replace('/play/', '/embed/');
-  const embedSrc = `${src}${src.includes('?') ? '&' : '?'}autoplay=false&controls=false`;
+  }, [version.id, version.videoId, onRegister, onUnregister]);
 
   return (
-    <div className="relative w-full h-full group">
-      <iframe
-        ref={iframeRef}
-        src={embedSrc}
-        width="100%"
-        height="100%"
-        className="w-full h-full pointer-events-none border-0"
-        style={{ pointerEvents: 'none' }}
-        allow="accelerometer; autoplay; encrypted-media; gyroscope;"
-        allowFullScreen
-      />
+    <div ref={panelRef} className="relative w-full h-full group flex items-center justify-center bg-black">
+      <div
+        className={cn(
+          'relative flex items-center justify-center bg-black',
+          isPortraitSource ? 'h-full overflow-hidden' : 'w-full h-full'
+        )}
+        style={isPortraitSource && portraitFrameWidth > 0 ? { width: `${portraitFrameWidth}px` } : undefined}
+      >
+        <video
+          ref={videoRef}
+          className="w-full h-full object-contain pointer-events-none border-0 bg-black"
+          style={{
+            pointerEvents: 'none',
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            objectPosition: 'center',
+            backgroundColor: 'black',
+          }}
+          preload="metadata"
+          playsInline
+        />
+      </div>
     </div>
   )
 }

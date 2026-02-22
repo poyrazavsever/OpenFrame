@@ -6,6 +6,7 @@ import { validateUrl, validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
 import { notifyProjectOwner } from '@/lib/notifications';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
+import { verifyBunnyUploadToken } from '@/lib/bunny-upload-token';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string }> };
 
@@ -98,7 +99,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         }
 
         const body = await request.json();
-        const { videoUrl, providerId, providerVideoId, versionLabel, thumbnailUrl, duration, setActive } = body;
+        const {
+            videoUrl,
+            providerId,
+            providerVideoId,
+            versionLabel,
+            thumbnailUrl,
+            duration,
+            setActive,
+            uploadToken
+        } = body;
 
         if (!videoUrl) {
             return apiErrors.badRequest('Video URL is required');
@@ -113,6 +123,27 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const thumbnailUrlError = validateOptionalUrl(thumbnailUrl, 'Thumbnail URL');
         if (thumbnailUrlError) {
             return apiErrors.badRequest(thumbnailUrlError);
+        }
+
+        const normalizedProviderId = typeof providerId === 'string' && providerId.trim()
+            ? providerId.trim().toLowerCase()
+            : 'youtube';
+        const normalizedProviderVideoId = typeof providerVideoId === 'string' ? providerVideoId.trim() : '';
+        const normalizedUploadToken = typeof uploadToken === 'string' ? uploadToken.trim() : '';
+
+        if (normalizedProviderId === 'bunny') {
+            if (!normalizedProviderVideoId || !normalizedUploadToken) {
+                return apiErrors.badRequest('Bunny uploads must include providerVideoId and uploadToken');
+            }
+
+            const isValidUploadToken = verifyBunnyUploadToken(normalizedUploadToken, {
+                userId: session.user.id,
+                projectId,
+                videoId: normalizedProviderVideoId,
+            });
+            if (!isValidUploadToken) {
+                return apiErrors.forbidden('Invalid Bunny upload token');
+            }
         }
 
         const nextVersionNumber = (video.versions[0]?.versionNumber || 0) + 1;
@@ -131,8 +162,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 data: {
                     versionNumber: nextVersionNumber,
                     versionLabel: versionLabel?.trim() || null,
-                    providerId: providerId || 'youtube',
-                    videoId: providerVideoId || '',
+                    providerId: normalizedProviderId,
+                    videoId: normalizedProviderVideoId,
                     originalUrl: videoUrl,
                     title: versionLabel?.trim() || `Version ${nextVersionNumber}`,
                     thumbnailUrl: thumbnailUrl || null,

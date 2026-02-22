@@ -2,9 +2,9 @@ import { Metadata } from 'next';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
-import { getCachedTotalStorage } from '@/lib/admin-stats';
+import { getCachedBunnyStorageStats, getCachedTotalStorage } from '@/lib/admin-stats';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, Folder, Video, MessageSquare, Mic, HardDrive, Image as ImageIcon } from 'lucide-react';
+import { Users, Folder, Video, MessageSquare, Mic, HardDrive, Image as ImageIcon, Film } from 'lucide-react';
 
 export const metadata: Metadata = {
     title: 'Admin Dashboard | OpenFrame',
@@ -49,7 +49,10 @@ export default async function AdminDashboardPage() {
     ]);
 
     // 2. Storage Stats (Cached)
-    const totalStorageBytes = await getCachedTotalStorage();
+    const [totalStorageBytes, bunnyStorageStats] = await Promise.all([
+        getCachedTotalStorage(),
+        getCachedBunnyStorageStats(),
+    ]);
 
     return (
         <div className="flex-1 space-y-4 px-4 md:px-8">
@@ -121,6 +124,15 @@ export default async function AdminDashboardPage() {
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">{formatBytes(totalStorageBytes)}</div>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Bunny Stream Storage</CardTitle>
+                        <Film className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{formatBytes(bunnyStorageStats.totalBytes)}</div>
                     </CardContent>
                 </Card>
             </div>

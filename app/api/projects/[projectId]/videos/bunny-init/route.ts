@@ -3,12 +3,46 @@ import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
+import { rateLimit } from '@/lib/rate-limit';
 import crypto from 'crypto';
+import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
+import { createBunnyUploadToken, verifyBunnyUploadToken } from '@/lib/bunny-upload-token';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
+async function getProjectWithEditAccess(projectId: string, userId: string) {
+    const project = await db.project.findUnique({
+        where: { id: projectId },
+        include: {
+            members: { where: { userId } },
+            workspace: {
+                include: {
+                    members: { where: { userId } },
+                },
+            },
+        },
+    });
+
+    if (!project) return null;
+
+    const isOwner = project.ownerId === userId;
+    const membership = project.members[0];
+    const workspaceMembership = project.workspace.members[0];
+    const canEdit = isOwner ||
+        membership?.role === ProjectMemberRole.ADMIN ||
+        workspaceMembership?.role === WorkspaceMemberRole.ADMIN;
+
+    if (!canEdit) return null;
+
+    return project;
+}
+
+// POST /api/projects/[projectId]/videos/bunny-init
 export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
+        const limited = await rateLimit(request, 'mutate');
+        if (limited) return limited;
+
         const session = await auth();
         const { projectId } = await params;
 
@@ -16,36 +50,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return apiErrors.unauthorized();
         }
 
-        // Check project access (must be owner, project admin, or workspace admin)
-        const project = await db.project.findUnique({
-            where: { id: projectId },
-            include: {
-                members: { where: { userId: session.user.id } },
-                workspace: {
-                    include: {
-                        members: { where: { userId: session.user.id } },
-                    },
-                },
-            },
-        });
-
+        const project = await getProjectWithEditAccess(projectId, session.user.id);
         if (!project) {
-            return apiErrors.notFound('Project');
-        }
-
-        const isOwner = project.ownerId === session.user.id;
-        const membership = project.members[0];
-        const workspaceMembership = project.workspace.members[0];
-        const canEdit = isOwner ||
-            membership?.role === ProjectMemberRole.ADMIN ||
-            workspaceMembership?.role === WorkspaceMemberRole.ADMIN;
-
-        if (!canEdit) {
             return apiErrors.forbidden('Access denied');
         }
 
-        const body = await request.json();
-        const { title } = body;
+        const body = await request.json().catch(() => null);
+        const title = typeof body?.title === 'string' ? body.title.trim() : '';
 
         if (!title) {
             return apiErrors.badRequest('Title is required');
@@ -76,6 +87,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         const bunnyVideo = await bunnyRes.json();
         const videoId = bunnyVideo.guid;
+        if (typeof videoId !== 'string' || videoId.length === 0) {
+            return apiErrors.internalError('Upload provider did not return a valid video identifier');
+        }
 
         // 2. Generate TUS upload signature
         const expirationTime = Math.floor(Date.now() / 1000) + 3600; // 1 hour validity
@@ -84,17 +98,69 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const hash = crypto.createHash('sha256');
         hash.update(libraryId + apiKey + expirationTime + videoId);
         const signature = hash.digest('hex');
+        const uploadToken = createBunnyUploadToken({
+            userId: session.user.id,
+            projectId,
+            videoId,
+        }, 3600);
 
         const response = successResponse({
             videoId,
             libraryId,
             signature,
-            expirationTime
+            expirationTime,
+            uploadToken,
         });
 
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
         console.error('Error initializing Bunny upload:', error);
         return apiErrors.internalError('Failed to initialize upload');
+    }
+}
+
+// DELETE /api/projects/[projectId]/videos/bunny-init
+// Best-effort cleanup for interrupted uploads before a DB row is created.
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+    try {
+        const limited = await rateLimit(request, 'mutate');
+        if (limited) return limited;
+
+        const session = await auth();
+        const { projectId } = await params;
+
+        if (!session?.user?.id) {
+            return apiErrors.unauthorized();
+        }
+
+        const project = await getProjectWithEditAccess(projectId, session.user.id);
+        if (!project) {
+            return apiErrors.forbidden('Access denied');
+        }
+
+        const body = await request.json().catch(() => null);
+        const videoId = typeof body?.videoId === 'string' ? body.videoId.trim() : '';
+        const uploadToken = typeof body?.uploadToken === 'string' ? body.uploadToken.trim() : '';
+
+        if (!videoId || !uploadToken) {
+            return apiErrors.badRequest('videoId and uploadToken are required');
+        }
+
+        const isValidUploadToken = verifyBunnyUploadToken(uploadToken, {
+            userId: session.user.id,
+            projectId,
+            videoId,
+        });
+        if (!isValidUploadToken) {
+            return apiErrors.forbidden('Invalid Bunny upload token');
+        }
+
+        await cleanupBunnyStreamVideos([{ providerId: 'bunny', videoId }]);
+
+        const response = successResponse({ message: 'Pending upload cleaned up' });
+        return withCacheControl(response, 'private, no-store');
+    } catch (error) {
+        console.error('Error cleaning up pending Bunny upload:', error);
+        return apiErrors.internalError('Failed to cleanup pending upload');
     }
 }
