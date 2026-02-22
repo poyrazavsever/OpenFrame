@@ -185,8 +185,52 @@ function formatBunnyQualityLabel(level: { height?: number; bitrate?: number }, i
   return `Level ${index + 1}`;
 }
 
+function sanitizeDownloadFileName(value: string): string {
+  return value
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const BUNNY_PULL_ZONE_HOSTNAME = 'vz-965f4f4a-fc1.b-cdn.net';
+const DIRECT_DOWNLOAD_ALLOWED_HOSTS = [
+  BUNNY_PULL_ZONE_HOSTNAME,
+  ...(process.env.NEXT_PUBLIC_BUNNY_CDN_URL
+    ? (() => {
+      try {
+        return [new URL(process.env.NEXT_PUBLIC_BUNNY_CDN_URL).hostname];
+      } catch {
+        return [process.env.NEXT_PUBLIC_BUNNY_CDN_URL.replace(/^https?:\/\//, '').replace(/\/+$/, '')];
+      }
+    })()
+    : []),
+  ...(process.env.NEXT_PUBLIC_DIRECT_DOWNLOAD_ALLOWED_HOSTS ?? '').split(','),
+]
+  .map((host) => host.trim().toLowerCase())
+  .filter(Boolean);
+
+function getSafeDirectDownloadUrl(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+
+    if (DIRECT_DOWNLOAD_ALLOWED_HOSTS.length === 0) {
+      return null;
+    }
+
+    const normalizedHost = parsed.hostname.toLowerCase();
+    if (!DIRECT_DOWNLOAD_ALLOWED_HOSTS.includes(normalizedHost)) {
+      return null;
+    }
+
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
 
 interface BunnyQualityOption {
   level: number;
@@ -256,6 +300,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [showResolved, setShowResolved] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isDownloadingVideo, setIsDownloadingVideo] = useState(false);
 
   // Watch progress state
   const [savedProgress, setSavedProgress] = useState<number | null>(null);
@@ -496,6 +541,69 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       video?.versions?.find((v) => v.isActive) ||
       video?.versions?.[0];
   }, [video?.versions, activeVersionId]);
+
+  const isVideoDownloadAvailable = useMemo(() => {
+    if (!activeVersion) return false;
+    if (activeVersion.providerId === 'bunny') return true;
+    if (activeVersion.providerId !== 'direct') return false;
+    return !!getSafeDirectDownloadUrl(activeVersion.originalUrl);
+  }, [activeVersion]);
+
+  const handleDownloadVideo = useCallback(async () => {
+    if (!activeVersion || !video || isDownloadingVideo) return;
+    if (activeVersion.providerId !== 'bunny' && activeVersion.providerId !== 'direct') {
+      toast.error('This video source does not support direct download');
+      return;
+    }
+
+    setIsDownloadingVideo(true);
+    try {
+      let downloadUrl: string | null = null;
+
+      if (activeVersion.providerId === 'bunny') {
+        const prepareRes = await fetch(`/api/versions/${activeVersion.id}/download?prepare=1`, {
+          cache: 'no-store',
+        });
+        if (!prepareRes.ok) {
+          throw new Error('Failed to prepare download');
+        }
+
+        const prepareBody = await prepareRes.json().catch(() => null);
+        const quality = Number(prepareBody?.data?.quality);
+        const qualityQuery = Number.isFinite(quality) && quality > 0
+          ? `?quality=${quality}`
+          : '';
+        downloadUrl = `/api/versions/${activeVersion.id}/download${qualityQuery}`;
+      } else {
+        downloadUrl = getSafeDirectDownloadUrl(activeVersion.originalUrl);
+        if (!downloadUrl) {
+          throw new Error('Direct download URL is not allowed');
+        }
+      }
+
+      if (!downloadUrl) {
+        throw new Error('Missing download URL');
+      }
+
+      const versionLabel = activeVersion.versionLabel?.trim() || `v${activeVersion.versionNumber}`;
+      const baseName = sanitizeDownloadFileName(`${video.title} ${versionLabel}`) || 'video';
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `${baseName}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (error) {
+      console.error('Failed to start video download:', error);
+      if (error instanceof Error && error.message === 'Direct download URL is not allowed') {
+        toast.error('This direct download host is not allowed');
+      } else {
+        toast.error('Failed to start download');
+      }
+    } finally {
+      setIsDownloadingVideo(false);
+    }
+  }, [activeVersion, isDownloadingVideo, video]);
 
   // Memoize comments array
   const comments = useMemo(() => {
@@ -2692,6 +2800,24 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                 </AlertDialogContent>
               </AlertDialog>
 
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  'transition-opacity duration-300',
+                  isDownloadingVideo && 'opacity-50 pointer-events-none'
+                )}
+                onClick={handleDownloadVideo}
+                disabled={!isVideoDownloadAvailable || isDownloadingVideo}
+              >
+                {isDownloadingVideo ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-1" />
+                )}
+                Download
+              </Button>
+
               {mode === 'dashboard' && (
                 <>
                   <div className="hidden sm:flex items-center gap-2">
@@ -2835,6 +2961,20 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onSelect={(event) => {
+                            event.preventDefault();
+                            void handleDownloadVideo();
+                          }}
+                          disabled={!isVideoDownloadAvailable || isDownloadingVideo}
+                        >
+                          {isDownloadingVideo ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4 mr-2" />
+                          )}
+                          Download
+                        </DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => setShowVersionDialog(true)}>
                           <Plus className="h-4 w-4 mr-2" />
                           New Version
