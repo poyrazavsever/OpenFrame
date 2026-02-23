@@ -5,6 +5,7 @@ import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response
 import { rateLimit } from '@/lib/rate-limit';
 import { validateShareLinkAccess } from '@/lib/share-links';
 import { getShareSessionFromRequest } from '@/lib/share-session';
+import { getGuestIdentityFromRequest } from '@/lib/guest-identity';
 
 type RouteParams = { params: Promise<{ videoId: string }> };
 
@@ -48,6 +49,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                                     annotationData: true,
                                     parentId: true,
                                     authorId: true,
+                                    guestIdentityId: true,
                                     tagId: true,
                                     versionId: true,
                                     guestName: true,
@@ -70,6 +72,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                                             annotationData: true,
                                             parentId: true,
                                             authorId: true,
+                                            guestIdentityId: true,
                                             tagId: true,
                                             versionId: true,
                                             guestName: true,
@@ -109,7 +112,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 requiredPermission: 'VIEW',
                 passwordVerified: shareSession.passwordVerified,
             })
-            : { hasAccess: false, canComment: false, allowGuests: false, requiresPassword: false };
+            : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
 
         if (!access.hasAccess && !shareAccess.hasAccess) {
             return apiErrors.forbidden('Access denied');
@@ -117,10 +120,65 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
         // Include auth context so the client knows if the viewer is a guest
         const { project, ...videoData } = video;
+        const viewerUserId = session?.user?.id ?? null;
+        const viewerGuestIdentityId = viewerUserId ? null : getGuestIdentityFromRequest(request);
+        const isProjectOwner = viewerUserId === project.ownerId;
+
+        const versions = videoData.versions.map((version) => {
+            if (!('comments' in version)) {
+                return version;
+            }
+
+            return {
+                ...version,
+                comments: version.comments.map((comment) => {
+                    const canEditComment = viewerUserId
+                        ? comment.authorId === viewerUserId
+                        : !!viewerGuestIdentityId
+                        && !!comment.guestIdentityId
+                        && comment.guestIdentityId === viewerGuestIdentityId;
+                    const canDeleteComment = canEditComment || isProjectOwner;
+                    const {
+                        authorId: _commentAuthorId,
+                        guestIdentityId: _commentGuestIdentityId,
+                        replies,
+                        ...commentData
+                    } = comment;
+
+                    return {
+                        ...commentData,
+                        canEdit: canEditComment,
+                        canDelete: canDeleteComment,
+                        replies: replies.map((reply) => {
+                            const canEditReply = viewerUserId
+                                ? reply.authorId === viewerUserId
+                                : !!viewerGuestIdentityId
+                                && !!reply.guestIdentityId
+                                && reply.guestIdentityId === viewerGuestIdentityId;
+                            const canDeleteReply = canEditReply || isProjectOwner;
+                            const {
+                                authorId: _replyAuthorId,
+                                guestIdentityId: _replyGuestIdentityId,
+                                ...replyData
+                            } = reply;
+                            return {
+                                ...replyData,
+                                canEdit: canEditReply,
+                                canDelete: canDeleteReply,
+                            };
+                        }),
+                    };
+                }),
+            };
+        });
+
         const canCommentWithMembership = access.hasAccess;
         const canCommentWithShareLink = shareAccess.canComment && (session?.user?.id ? true : shareAccess.allowGuests);
+        const canDownloadWithMembership = access.hasAccess;
+        const canDownloadWithShareLink = shareAccess.hasAccess && shareAccess.canDownload;
         const response = successResponse({
             ...videoData,
+            versions,
             projectId: video.projectId,
             project: {
                 name: project.name,
@@ -131,6 +189,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             currentUserId: session?.user?.id || null,
             currentUserName: session?.user?.name || null,
             canComment: canCommentWithMembership || canCommentWithShareLink,
+            canDownload: canDownloadWithMembership || canDownloadWithShareLink,
+            canManageTags: access.canEdit,
         });
 
         return withCacheControl(response, 'private, no-cache');

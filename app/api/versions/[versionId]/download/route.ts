@@ -2,6 +2,9 @@ import { db } from '@/lib/db';
 import { auth, checkProjectAccess } from '@/lib/auth';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { rateLimit } from '@/lib/rate-limit';
+import { validateShareLinkAccess } from '@/lib/share-links';
+import { getShareSessionFromRequest } from '@/lib/share-session';
+import { NextRequest } from 'next/server';
 import { DownloadEgressSource } from '@prisma/client';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
@@ -319,7 +322,7 @@ function parseEstimatedBytes(contentLengthHeader: string | null): bigint {
 }
 
 // GET /api/versions/[versionId]/download
-export async function GET(request: Request, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { searchParams } = new URL(request.url);
     const isPrepareOnly = searchParams.get('prepare') === '1';
@@ -362,7 +365,18 @@ export async function GET(request: Request, { params }: RouteParams) {
     }
 
     const access = await checkProjectAccess(version.video.project, session?.user?.id);
-    if (!access.hasAccess) {
+    const shareSession = getShareSessionFromRequest(request, version.video.id);
+    const shareAccess = shareSession
+      ? await validateShareLinkAccess({
+        token: shareSession.token,
+        projectId: version.video.projectId,
+        videoId: version.video.id,
+        requiredPermission: 'VIEW',
+        passwordVerified: shareSession.passwordVerified,
+      })
+      : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
+    const canDownloadViaShareLink = shareAccess.hasAccess && shareAccess.canDownload;
+    if (!access.hasAccess && !canDownloadViaShareLink) {
       return apiErrors.forbidden('Access denied');
     }
 

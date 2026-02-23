@@ -16,6 +16,7 @@ interface ValidateShareLinkParams {
 export interface ShareLinkAccessResult {
   hasAccess: boolean;
   canComment: boolean;
+  canDownload: boolean;
   allowGuests: boolean;
   requiresPassword: boolean;
   link: ShareLink | null;
@@ -47,7 +48,7 @@ export async function validateShareLinkAccess({
   });
 
   if (!link) {
-    return { hasAccess: false, canComment: false, allowGuests: false, requiresPassword: false, link: null };
+    return { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false, link: null };
   }
 
   const projectMatches = link.projectId === projectId;
@@ -56,27 +57,28 @@ export async function validateShareLinkAccess({
   const permissionMatches = hasRequiredPermission(link.permission, requiredPermission);
 
   if (!projectMatches || !videoMatches || !permissionMatches || isLinkExpired(link)) {
-    return { hasAccess: false, canComment: false, allowGuests: false, requiresPassword: false, link };
+    return { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false, link };
   }
 
   if (link.passwordHash && !passwordVerified) {
     if (!presentedPassword) {
-      return { hasAccess: false, canComment: false, allowGuests: false, requiresPassword: true, link };
+      return { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: true, link };
     }
 
     if (presentedPassword.length > MAX_SHARE_PASSWORD_LENGTH) {
-      return { hasAccess: false, canComment: false, allowGuests: false, requiresPassword: true, link };
+      return { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: true, link };
     }
 
     const isPasswordValid = await bcrypt.compare(presentedPassword, link.passwordHash);
     if (!isPasswordValid) {
-      return { hasAccess: false, canComment: false, allowGuests: false, requiresPassword: true, link };
+      return { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: true, link };
     }
   }
 
   return {
     hasAccess: true,
     canComment: link.permission === 'COMMENT',
+    canDownload: link.allowDownloads,
     allowGuests: link.allowGuests,
     requiresPassword: false,
     link,

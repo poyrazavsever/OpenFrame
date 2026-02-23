@@ -2,18 +2,11 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
+import { validateShareLinkAccess } from '@/lib/share-links';
+import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
-
-// Default tags to create for new projects
-const DEFAULT_TAGS = [
-    { name: 'Feedback', color: '#3B82F6', position: 0 },
-    { name: 'Technical', color: '#EF4444', position: 1 },
-    { name: 'Creative', color: '#8B5CF6', position: 2 },
-    { name: 'Approved', color: '#22C55E', position: 3 },
-    { name: 'Urgent', color: '#F59E0B', position: 4 },
-];
 
 // Helper to check project access
 async function checkProjectAccess(projectId: string, userId: string) {
@@ -51,36 +44,56 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const session = await auth();
         const { projectId } = await params;
+        const videoId = request.nextUrl.searchParams.get('videoId');
 
-        if (!session?.user?.id) {
-            return apiErrors.unauthorized();
+        const project = await db.project.findUnique({
+            where: { id: projectId },
+            select: { id: true, visibility: true },
+        });
+        if (!project) return apiErrors.notFound('Project');
+
+        if (session?.user?.id) {
+            const { project: accessibleProject } = await checkProjectAccess(projectId, session.user.id);
+            if (!accessibleProject) {
+                return apiErrors.notFound('Project');
+            }
+        } else {
+            let hasGuestAccess = project.visibility === 'PUBLIC';
+            if (!hasGuestAccess && videoId) {
+                const video = await db.video.findFirst({
+                    where: { id: videoId, projectId },
+                    select: { id: true },
+                });
+                if (video) {
+                    const shareSession = getShareSessionFromRequest(request, video.id);
+                    const shareAccess = shareSession
+                        ? await validateShareLinkAccess({
+                            token: shareSession.token,
+                            projectId,
+                            videoId: video.id,
+                            requiredPermission: 'COMMENT',
+                            passwordVerified: shareSession.passwordVerified,
+                        })
+                        : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
+                    hasGuestAccess = shareAccess.canComment && shareAccess.allowGuests;
+                }
+            }
+
+            if (!hasGuestAccess) {
+                return apiErrors.forbidden('Access denied');
+            }
         }
 
-        const { project } = await checkProjectAccess(projectId, session.user.id);
-        if (!project) {
-            return apiErrors.notFound('Project');
-        }
-
-        let tags = await db.commentTag.findMany({
+        const tags = await db.commentTag.findMany({
             where: { projectId },
             orderBy: { position: 'asc' },
         });
 
-        // Auto-create default tags if none exist (idempotent with skipDuplicates
-        // to handle race conditions from concurrent requests)
-        if (tags.length === 0) {
-            await db.commentTag.createMany({
-                data: DEFAULT_TAGS.map((tag) => ({ ...tag, projectId })),
-                skipDuplicates: true,
-            });
-            tags = await db.commentTag.findMany({
-                where: { projectId },
-                orderBy: { position: 'asc' },
-            });
-        }
-
         const response = successResponse(tags);
-        return withCacheControl(response, 'private, max-age=120, stale-while-revalidate=300');
+        const cacheControl = session?.user?.id
+            ? 'private, max-age=120, stale-while-revalidate=300'
+            : 'private, no-cache';
+        return withCacheControl(response, cacheControl);
     } catch (error) {
         console.error('Error fetching tags:', error);
         return apiErrors.internalError('Failed to fetch tags');

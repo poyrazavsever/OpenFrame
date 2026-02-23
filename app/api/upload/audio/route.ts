@@ -1,14 +1,23 @@
-import { auth } from '@/lib/auth';
+import { NextRequest } from 'next/server';
+import { auth, checkProjectAccess } from '@/lib/auth';
+import { db } from '@/lib/db';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { rateLimit } from '@/lib/rate-limit';
+import { validateShareLinkAccess } from '@/lib/share-links';
+import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
+import {
+  deriveGuestUploadContext,
+  enforceGuestUploadQuota,
+  verifyGuestUploadToken,
+} from '@/lib/guest-upload-token';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_TYPES = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav'];
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     // Check Content-Length header BEFORE loading the file
     const contentLength = request.headers.get('content-length');
@@ -23,17 +32,68 @@ export async function POST(request: Request) {
     const limited = await rateLimit(request, 'voice-upload');
     if (limited) return limited;
 
-    // Require authentication
     const session = await auth();
-    if (!session?.user?.id) {
-      return apiErrors.unauthorized();
-    }
 
     const formData = await request.formData();
     const file = formData.get('audio') as File | null;
+    const videoId = formData.get('videoId');
+    const uploadToken = formData.get('uploadToken');
 
     if (!file) {
       return apiErrors.badRequest('No audio file provided');
+    }
+    if (typeof videoId !== 'string' || !videoId.trim()) {
+      return apiErrors.badRequest('videoId is required');
+    }
+
+    const safeVideoId = videoId.trim();
+    const video = await db.video.findUnique({
+      where: { id: safeVideoId },
+      include: { project: true },
+    });
+    if (!video) {
+      return apiErrors.notFound('Video');
+    }
+
+    const access = await checkProjectAccess(video.project, session?.user?.id);
+    const shareSession = getShareSessionFromRequest(request, safeVideoId);
+    const shareAccess = shareSession
+      ? await validateShareLinkAccess({
+        token: shareSession.token,
+        projectId: video.projectId,
+        videoId: safeVideoId,
+        requiredPermission: 'COMMENT',
+        passwordVerified: shareSession.passwordVerified,
+      })
+      : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
+    const canCommentWithMembership = !!session?.user?.id && access.hasAccess;
+    const canCommentWithShareLink = shareAccess.canComment && (session?.user?.id ? true : shareAccess.allowGuests);
+    if (!canCommentWithMembership && !canCommentWithShareLink) {
+      return apiErrors.forbidden('Access denied');
+    }
+
+    if (!session?.user?.id) {
+      if (typeof uploadToken !== 'string' || !uploadToken.trim()) {
+        return apiErrors.badRequest('uploadToken is required for guest uploads');
+      }
+
+      const expectedContext = deriveGuestUploadContext(request, shareSession?.token ?? null);
+      if (!expectedContext) {
+        return apiErrors.forbidden('Missing trusted client IP header');
+      }
+
+      const isValidUploadToken = verifyGuestUploadToken(uploadToken.trim(), {
+        projectId: video.projectId,
+        videoId: safeVideoId,
+        intent: 'audio',
+        context: expectedContext,
+      });
+      if (!isValidUploadToken) {
+        return apiErrors.forbidden('Invalid upload token');
+      }
+
+      const quotaError = await enforceGuestUploadQuota(request, safeVideoId, 'audio', shareSession?.token ?? null);
+      if (quotaError) return quotaError;
     }
 
     // Double-check file size (defense in depth - Content-Length can be spoofed)

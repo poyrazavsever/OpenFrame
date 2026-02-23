@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
-import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { apiErrors } from '@/lib/api-response';
+import { db } from '@/lib/db';
 
 // Only allow UUID filenames with safe extensions
 const SAFE_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
@@ -15,6 +16,7 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
   ogg: 'audio/ogg',
   wav: 'audio/wav',
 };
+const UNATTACHED_UPLOAD_TTL_MS = 15 * 60 * 1000;
 
 function getContentType(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
@@ -34,6 +36,7 @@ export async function GET(
     }
 
     const key = `voice/${filename}`;
+    const mediaUrl = `/api/upload/audio/${filename}`;
 
     // Get file metadata to determine content type
     const headResponse = await r2Client.send(
@@ -42,6 +45,23 @@ export async function GET(
         Key: key,
       })
     );
+
+    const lastModified = headResponse.LastModified;
+    if (lastModified && Date.now() - lastModified.getTime() > UNATTACHED_UPLOAD_TTL_MS) {
+      const referenced = await db.comment.findFirst({
+        where: { voiceUrl: mediaUrl },
+        select: { id: true },
+      });
+      if (!referenced) {
+        await r2Client.send(
+          new DeleteObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: key,
+          })
+        ).catch(() => undefined);
+        return apiErrors.notFound('File');
+      }
+    }
 
     // Use the stored content-type or infer from filename extension
     const contentType = headResponse.ContentType || getContentType(filename);
@@ -78,7 +98,7 @@ export async function GET(
       status: 200,
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': 'private, no-store',
         'Accept-Ranges': 'bytes',
       },
     });

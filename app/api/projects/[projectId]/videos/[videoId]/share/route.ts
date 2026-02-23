@@ -30,8 +30,27 @@ async function requireShareManagementAccess(projectId: string, videoId: string, 
   return { error: null, video };
 }
 
+function resolveShareBaseUrl(request: NextRequest): string {
+  const configuredBaseUrl = process.env.NEXTAUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  const normalizedConfiguredBaseUrl = configuredBaseUrl?.trim();
+
+  if (normalizedConfiguredBaseUrl) {
+    const withProtocol = /^https?:\/\//i.test(normalizedConfiguredBaseUrl)
+      ? normalizedConfiguredBaseUrl
+      : `https://${normalizedConfiguredBaseUrl}`;
+
+    try {
+      return new URL(withProtocol).origin;
+    } catch {
+      // Fallback to request origin when env configuration is invalid.
+    }
+  }
+
+  return request.nextUrl.origin;
+}
+
 function buildWatchUrl(request: NextRequest, videoId: string, token: string): string {
-  const url = new URL(`/watch/${videoId}`, request.nextUrl.origin);
+  const url = new URL(`/watch/${videoId}`, resolveShareBaseUrl(request));
   url.searchParams.set('shareToken', token);
   return url.toString();
 }
@@ -44,6 +63,7 @@ function serializeShareLink(
     token: string;
     permission: string;
     allowGuests: boolean;
+    allowDownloads: boolean;
     expiresAt: Date | null;
     createdAt: Date;
     passwordHash: string | null;
@@ -59,6 +79,7 @@ function serializeShareLink(
       token: link.token,
       permission: link.permission,
       allowGuests: link.allowGuests,
+      allowDownloads: link.allowDownloads,
       expiresAt: link.expiresAt,
       createdAt: link.createdAt,
       hasPassword: !!link.passwordHash,
@@ -91,6 +112,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         token: true,
         permission: true,
         allowGuests: true,
+        allowDownloads: true,
         expiresAt: true,
         createdAt: true,
         passwordHash: true,
@@ -123,6 +145,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const body = await request.json().catch(() => ({}));
     const allowGuests = typeof body?.allowGuests === 'boolean' ? body.allowGuests : true;
+    const allowDownloads = typeof body?.allowDownloads === 'boolean' ? body.allowDownloads : false;
     const password = typeof body?.password === 'string' ? body.password.trim() : '';
     if (password.length > MAX_SHARE_PASSWORD_LENGTH) {
       return apiErrors.badRequest(`Password must be ${MAX_SHARE_PASSWORD_LENGTH} characters or fewer`);
@@ -135,6 +158,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       token: string;
       permission: string;
       allowGuests: boolean;
+      allowDownloads: boolean;
       expiresAt: Date | null;
       createdAt: Date;
       passwordHash: string | null;
@@ -158,6 +182,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
               data: {
                 token,
                 allowGuests,
+                allowDownloads,
                 passwordHash,
                 expiresAt: null,
               },
@@ -166,6 +191,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 token: true,
                 permission: true,
                 allowGuests: true,
+                allowDownloads: true,
                 expiresAt: true,
                 createdAt: true,
                 passwordHash: true,
@@ -180,6 +206,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
               videoId,
               permission: 'COMMENT',
               allowGuests,
+              allowDownloads,
               passwordHash,
             },
             select: {
@@ -187,6 +214,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
               token: true,
               permission: true,
               allowGuests: true,
+              allowDownloads: true,
               expiresAt: true,
               createdAt: true,
               passwordHash: true,
@@ -232,6 +260,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     const body = await request.json().catch(() => ({}));
     const allowGuests = typeof body?.allowGuests === 'boolean' ? body.allowGuests : undefined;
+    const allowDownloads = typeof body?.allowDownloads === 'boolean' ? body.allowDownloads : undefined;
     const rawPassword = typeof body?.password === 'string' ? body.password : undefined;
     const clearPassword = body?.clearPassword === true;
     if (rawPassword !== undefined && rawPassword.length > MAX_SHARE_PASSWORD_LENGTH) {
@@ -266,6 +295,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       where: { id: existing.id },
       data: {
         ...(allowGuests !== undefined ? { allowGuests } : {}),
+        ...(allowDownloads !== undefined ? { allowDownloads } : {}),
         ...(passwordHashUpdate !== undefined ? { passwordHash: passwordHashUpdate } : {}),
         ...(shouldRotateToken ? { token: randomBytes(24).toString('base64url') } : {}),
       },
@@ -274,6 +304,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         token: true,
         permission: true,
         allowGuests: true,
+        allowDownloads: true,
         expiresAt: true,
         createdAt: true,
         passwordHash: true,

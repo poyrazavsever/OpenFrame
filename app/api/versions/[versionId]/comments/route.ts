@@ -6,10 +6,35 @@ import { notifyProjectOwner } from '@/lib/notifications';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { validateShareLinkAccess } from '@/lib/share-links';
 import { getShareSessionFromRequest } from '@/lib/share-session';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
+import { ensureGuestIdentityFromRequest, getGuestIdentityFromRequest, setGuestIdentityCookie } from '@/lib/guest-identity';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
 const SAFE_IMAGE_PATH = /^\/api\/upload\/image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 const SAFE_AUDIO_PATH = /^\/api\/upload\/audio\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+const UNATTACHED_UPLOAD_TTL_MS = 15 * 60 * 1000;
+
+async function isFreshAttachment(url: string, kind: 'audio' | 'image'): Promise<boolean> {
+    const prefix = kind === 'audio' ? '/api/upload/audio/' : '/api/upload/image/';
+    if (!url.startsWith(prefix)) return false;
+
+    const filename = url.slice(prefix.length);
+    const key = kind === 'audio' ? `voice/${filename}` : `images/${filename}`;
+
+    try {
+        const head = await r2Client.send(
+            new HeadObjectCommand({
+                Bucket: R2_BUCKET_NAME,
+                Key: key,
+            })
+        );
+        if (!head.LastModified) return false;
+        return Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+    } catch {
+        return false;
+    }
+}
 
 // GET /api/versions/[versionId]/comments
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -200,7 +225,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 requiredPermission: 'COMMENT',
                 passwordVerified: shareSession.passwordVerified,
             })
-            : { hasAccess: false, canComment: false, allowGuests: false, requiresPassword: false };
+            : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
 
         // Check if user can comment
         const canComment = isOwner || isMember || isPublic || isWorkspaceMember || shareAccess.canComment;
@@ -247,10 +272,18 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (voiceUrl && !SAFE_AUDIO_PATH.test(voiceUrl)) {
             return apiErrors.badRequest('Voice URL must reference an uploaded audio file');
         }
+        if (voiceUrl && !(await isFreshAttachment(voiceUrl, 'audio'))) {
+            return apiErrors.badRequest('Voice upload expired. Please upload again.');
+        }
 
         if (imageUrl && !SAFE_IMAGE_PATH.test(imageUrl)) {
             return apiErrors.badRequest('Image URL must reference an uploaded image file');
         }
+        if (imageUrl && !(await isFreshAttachment(imageUrl, 'image'))) {
+            return apiErrors.badRequest('Image upload expired. Please upload again.');
+        }
+
+        const guestIdentity = isGuest ? ensureGuestIdentityFromRequest(request) : null;
 
         const comment = await db.comment.create({
             data: {
@@ -265,6 +298,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 authorId: session?.user?.id || null,
                 guestName: isGuest ? guestName : null,
                 guestEmail: isGuest ? guestEmail : null,
+                guestIdentityId: isGuest ? guestIdentity?.identityId ?? null : null,
                 tagId: tagId || null,
                 versionId,
             },
@@ -319,7 +353,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             }
         }
 
-        const response = successResponse(comment, 201);
+        const viewerUserId = session?.user?.id ?? null;
+        const viewerGuestIdentityId = viewerUserId
+            ? null
+            : guestIdentity?.identityId ?? getGuestIdentityFromRequest(request);
+        const canEditComment = viewerUserId
+            ? comment.authorId === viewerUserId
+            : !!viewerGuestIdentityId
+            && !!comment.guestIdentityId
+            && comment.guestIdentityId === viewerGuestIdentityId;
+        const { guestIdentityId: _guestIdentityId, ...commentData } = comment;
+
+        const response = successResponse({
+            ...commentData,
+            canEdit: canEditComment,
+            canDelete: canEditComment || viewerUserId === project.ownerId,
+        }, 201);
+        if (isGuest && guestIdentity?.shouldSetCookie) {
+            setGuestIdentityCookie(response, guestIdentity.identityId);
+        }
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
         console.error('Error creating comment:', error);

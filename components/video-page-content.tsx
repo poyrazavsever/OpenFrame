@@ -130,6 +130,8 @@ interface Comment {
   createdAt: string;
   author: { id: string; name: string | null; image: string | null } | null;
   guestName: string | null;
+  canEdit?: boolean;
+  canDelete?: boolean;
   tag: CommentTag | null;
   replies: {
     id: string;
@@ -141,6 +143,8 @@ interface Comment {
     createdAt: string;
     author: { id: string; name: string | null; image: string | null } | null;
     guestName: string | null;
+    canEdit?: boolean;
+    canDelete?: boolean;
     tag: CommentTag | null;
   }[];
 }
@@ -161,6 +165,8 @@ interface VideoData {
   currentUserId: string | null;
   currentUserName: string | null;
   canComment?: boolean;
+  canDownload?: boolean;
+  canManageTags?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -388,6 +394,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
   const isGuest = video ? !video.isAuthenticated : false;
   const canInitializePlayer = mode !== 'watch' || !isGuest || guestNameConfirmed;
+  const normalizedGuestName = guestName.trim();
 
   const [showVersionDialog, setShowVersionDialog] = useState(false);
   const [newVersionUrl, setNewVersionUrl] = useState('');
@@ -549,14 +556,18 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const isDownloadingVideo = activeDownloadTarget !== null;
 
   const isVideoDownloadAvailable = useMemo(() => {
-    if (!activeVersion) return false;
+    if (!activeVersion || !video?.canDownload) return false;
     if (activeVersion.providerId === 'bunny') return true;
     if (activeVersion.providerId !== 'direct') return false;
     return !!getSafeDirectDownloadUrl(activeVersion.originalUrl);
-  }, [activeVersion]);
+  }, [activeVersion, video?.canDownload]);
 
   const handleDownloadVideo = useCallback(async (preference: BunnyDownloadPreference = 'compressed') => {
     if (!activeVersion || !video || isDownloadingVideo) return;
+    if (!video.canDownload) {
+      toast.error('Download is disabled for this shared link');
+      return;
+    }
     if (activeVersion.providerId !== 'bunny' && activeVersion.providerId !== 'direct') {
       toast.error('This video source does not support direct download');
       return;
@@ -619,6 +630,24 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     }
   }, [activeVersion, isDownloadingVideo, video]);
 
+  const getGuestUploadToken = useCallback(async (intent: 'audio' | 'image') => {
+    if (!isGuest) return null;
+
+    const response = await fetch(`/api/watch/${videoId}/upload-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { data?: { token?: string }; error?: string }
+      | null;
+    const token = payload?.data?.token;
+    if (!response.ok || !token) {
+      throw new Error(payload?.error || 'Failed to prepare upload');
+    }
+    return token;
+  }, [isGuest, videoId]);
+
   // Memoize comments array
   const comments = useMemo(() => {
     return activeVersion?.comments || [];
@@ -671,7 +700,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     if (!projectId) return;
     async function fetchTags() {
       try {
-        const res = await fetch(`/api/projects/${projectId}/tags`);
+        const query = videoId ? `?videoId=${encodeURIComponent(videoId)}` : '';
+        const res = await fetch(`/api/projects/${projectId}/tags${query}`);
         if (res.ok) {
           const data = await res.json();
           const tags = data.data || [];
@@ -684,7 +714,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       }
     }
     fetchTags();
-  }, [projectId, selectedTagId]);
+  }, [projectId, selectedTagId, videoId]);
 
   // Load YouTube API immediately on component mount (async, non-blocking)
   useEffect(() => {
@@ -1542,7 +1572,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       isResolved: false,
       createdAt: new Date().toISOString(),
       author: isGuest ? null : { id: 'current-user', name: currentUserName, image: null },
-      guestName: isGuest ? guestName : null,
+      guestName: isGuest ? normalizedGuestName : null,
+      canEdit: true,
+      canDelete: true,
       tag: availableTags.find(t => t.id === selectedTagId) || null,
       replies: [],
     };
@@ -1578,6 +1610,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         setIsUploadingImage(true);
         const imageFormData = new FormData();
         imageFormData.append('image', imageBlob);
+        imageFormData.append('videoId', videoId);
+        const uploadToken = await getGuestUploadToken('image');
+        if (uploadToken) imageFormData.append('uploadToken', uploadToken);
 
         const imageRes = await fetch('/api/upload/image', {
           method: 'POST',
@@ -1597,7 +1632,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           timestamp: selectedTimestamp ?? currentTime,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
           ...(imageData && { imageUrl: imageData.url }),
-          ...(isGuest && guestName && { guestName }),
+          ...(isGuest && normalizedGuestName && { guestName: normalizedGuestName }),
           ...(selectedTagId && { tagId: selectedTagId }),
           ...(serializedAnnotation && { annotationData: serializedAnnotation }),
         }),
@@ -1649,7 +1684,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingImage(false);
       isMutatingRef.current = false;
     }
-  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, currentUserName, selectedTagId, availableTags, imageBlob, annotationStrokes, isAnnotating]);
+  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, normalizedGuestName, currentUserName, selectedTagId, availableTags, imageBlob, annotationStrokes, isAnnotating, videoId, getGuestUploadToken]);
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>, isReply: boolean = false) => {
     const file = e.target.files?.[0];
@@ -1758,6 +1793,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
+      formData.append('videoId', videoId);
+      const uploadToken = await getGuestUploadToken('audio');
+      if (uploadToken) formData.append('uploadToken', uploadToken);
 
       const uploadRes = await fetch('/api/upload/audio', {
         method: 'POST',
@@ -1779,7 +1817,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     } finally {
       setIsUploadingAudio(false);
     }
-  }, [audioBlob, activeVersion, recordingTime, handleAddComment]);
+  }, [audioBlob, activeVersion, recordingTime, handleAddComment, videoId, getGuestUploadToken]);
 
   const stopVoiceTracking = useCallback(() => {
     if (voiceRafRef.current) {
@@ -1895,6 +1933,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       if (audioBlob) {
         const formData = new FormData();
         formData.append('audio', audioBlob, 'recording.webm');
+        formData.append('videoId', videoId);
+        const uploadToken = await getGuestUploadToken('audio');
+        if (uploadToken) formData.append('uploadToken', uploadToken);
         const uploadRes = await fetch('/api/upload/audio', { method: 'POST', body: formData });
         if (!uploadRes.ok) throw new Error('Failed to upload audio');
         const uploadData = await uploadRes.json();
@@ -1914,7 +1955,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingAudio(false);
       setIsUploadingImage(false);
     }
-  }, [audioBlob, imageBlob, activeVersion, recordingTime, commentText, submitVoiceComment, handleAddComment]);
+  }, [audioBlob, imageBlob, activeVersion, recordingTime, commentText, submitVoiceComment, handleAddComment, videoId, getGuestUploadToken]);
 
   const handleResolveComment = useCallback(
     async (commentId: string, currentlyResolved: boolean) => {
@@ -2002,7 +2043,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       annotationData: null,
       createdAt: new Date().toISOString(),
       author: isGuest ? null : { id: 'current-user', name: currentUserName, image: null },
-      guestName: isGuest ? guestName : null,
+      guestName: isGuest ? normalizedGuestName : null,
+      canEdit: true,
+      canDelete: true,
       tag: null,
     };
 
@@ -2041,6 +2084,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         setIsUploadingReplyImage(true);
         const imageFormData = new FormData();
         imageFormData.append('image', replyImageBlob);
+        imageFormData.append('videoId', videoId);
+        const uploadToken = await getGuestUploadToken('image');
+        if (uploadToken) imageFormData.append('uploadToken', uploadToken);
 
         const imageRes = await fetch('/api/upload/image', {
           method: 'POST',
@@ -2061,7 +2107,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           parentId,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
           ...(submittedImageData && { imageUrl: submittedImageData.url }),
-          ...(isGuest && guestName && { guestName }),
+          ...(isGuest && normalizedGuestName && { guestName: normalizedGuestName }),
         }),
       });
 
@@ -2132,7 +2178,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingReplyImage(false);
       isMutatingRef.current = false;
     }
-  }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, guestName, currentUserName, replyImageBlob]);
+  }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, normalizedGuestName, currentUserName, replyImageBlob, videoId, getGuestUploadToken]);
 
   const startReplyRecording = useCallback(async () => {
     try {
@@ -2189,6 +2235,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     try {
       const formData = new FormData();
       formData.append('audio', replyAudioBlob, 'recording.webm');
+      formData.append('videoId', videoId);
+      const uploadToken = await getGuestUploadToken('audio');
+      if (uploadToken) formData.append('uploadToken', uploadToken);
       const uploadRes = await fetch('/api/upload/audio', { method: 'POST', body: formData });
       if (!uploadRes.ok) throw new Error('Failed to upload audio');
       const uploadData = await uploadRes.json();
@@ -2199,7 +2248,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     } finally {
       setIsUploadingReplyAudio(false);
     }
-  }, [replyAudioBlob, activeVersion, replyRecordingTime, handleReplyComment]);
+  }, [replyAudioBlob, activeVersion, replyRecordingTime, handleReplyComment, videoId, getGuestUploadToken]);
 
   const submitReplyWithMedia = useCallback(async (parentId: string) => {
     if (!activeVersion) return;
@@ -2218,6 +2267,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       if (replyAudioBlob) {
         const formData = new FormData();
         formData.append('audio', replyAudioBlob, 'recording.webm');
+        formData.append('videoId', videoId);
+        const uploadToken = await getGuestUploadToken('audio');
+        if (uploadToken) formData.append('uploadToken', uploadToken);
         const uploadRes = await fetch('/api/upload/audio', { method: 'POST', body: formData });
         if (!uploadRes.ok) throw new Error('Failed to upload audio reply');
         const uploadData = await uploadRes.json();
@@ -2237,7 +2289,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingReplyAudio(false);
       setIsUploadingReplyImage(false);
     }
-  }, [replyAudioBlob, replyImageBlob, activeVersion, replyRecordingTime, replyText, submitVoiceReply, handleReplyComment]);
+  }, [replyAudioBlob, replyImageBlob, activeVersion, replyRecordingTime, replyText, submitVoiceReply, handleReplyComment, videoId, getGuestUploadToken]);
 
   const handleEditComment = useCallback(async (commentId: string) => {
     if (!editText.trim() && !editAnnotationData) return;
@@ -2257,6 +2309,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       const body: Record<string, unknown> = { content: editText };
       if (editTagId !== undefined) body.tagId = editTagId;
       if (finalAnnotationData !== undefined) body.annotationData = finalAnnotationData;
+      if (isGuest && normalizedGuestName) body.guestName = normalizedGuestName;
       const res = await fetch(`/api/comments/${commentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -2306,7 +2359,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsSubmittingEdit(false);
       isMutatingRef.current = false;
     }
-  }, [editText, editTagId, editAnnotationData, isEditingAnnotation, activeVersionId, availableTags]);
+  }, [editText, editTagId, editAnnotationData, isEditingAnnotation, activeVersionId, availableTags, isGuest, normalizedGuestName]);
 
   const handleDeleteComment = useCallback(async (commentId: string) => {
     setDeletingCommentId(commentId);
@@ -3520,6 +3573,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                   comment.author?.name || comment.guestName || 'Anonymous';
                 const isEditing = editingCommentId === comment.id;
                 const isReplying = replyingTo === comment.id;
+                const canEditComment = comment.canEdit ?? (comment.author?.id === currentUserId);
+                const canDeleteComment = comment.canDelete ?? (comment.author?.id === currentUserId || video.project.ownerId === currentUserId);
+                const canManageComment = canEditComment || canDeleteComment;
                 return (
                   <div
                     key={comment.id}
@@ -3563,7 +3619,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                             <Circle className="h-4 w-4" />
                           )}
                         </Button>
-                        {(comment.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
+                        {canManageComment && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button
@@ -3582,7 +3638,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                                 <Reply className="h-4 w-4 mr-2" />
                                 Reply
                               </DropdownMenuItem>
-                              {comment.author?.id === currentUserId && (
+                              {canEditComment && (
                                 <DropdownMenuItem onClick={() => {
                                   setEditingCommentId(comment.id);
                                   setEditText(comment.content || '');
@@ -3592,13 +3648,15 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                                   Edit
                                 </DropdownMenuItem>
                               )}
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => handleDeleteComment(comment.id)}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
+                              {canDeleteComment && (
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onClick={() => handleDeleteComment(comment.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         )}
@@ -3774,6 +3832,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                           const replyAuthor =
                             reply.author?.name || reply.guestName || 'Anonymous';
                           const isEditingReply = editingCommentId === reply.id;
+                          const canEditReply = reply.canEdit ?? (reply.author?.id === currentUserId);
+                          const canDeleteReply = reply.canDelete ?? (reply.author?.id === currentUserId || video.project.ownerId === currentUserId);
+                          const canManageReply = canEditReply || canDeleteReply;
                           return (
                             <div key={reply.id} className="group/reply text-sm">
                               <div className="flex items-center justify-between gap-2 mb-1">
@@ -3788,7 +3849,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                                     {new Date(reply.createdAt).toLocaleDateString()}
                                   </span>
                                 </div>
-                                {(reply.author?.id === currentUserId || video.project.ownerId === currentUserId) && (
+                                {canManageReply && (
                                   <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                       <Button
@@ -3800,7 +3861,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
-                                      {reply.author?.id === currentUserId && (
+                                      {canEditReply && (
                                         <DropdownMenuItem onClick={() => {
                                           setEditingCommentId(reply.id);
                                           setEditText(reply.content || '');
@@ -3809,13 +3870,15 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                                           Edit
                                         </DropdownMenuItem>
                                       )}
-                                      <DropdownMenuItem
-                                        className="text-destructive"
-                                        onClick={() => handleDeleteComment(reply.id)}
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Delete
-                                      </DropdownMenuItem>
+                                      {canDeleteReply && (
+                                        <DropdownMenuItem
+                                          className="text-destructive"
+                                          onClick={() => handleDeleteComment(reply.id)}
+                                        >
+                                          <Trash2 className="h-4 w-4 mr-2" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
                                     </DropdownMenuContent>
                                   </DropdownMenu>
                                 )}
@@ -4345,13 +4408,17 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
                               {selectedTagId === tag.id && <span className="ml-auto">✓</span>}
                             </DropdownMenuItem>
                           ))}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem asChild>
-                            <Link href={`/projects/${projectId}/settings#comment-tags`} className="gap-2 text-muted-foreground">
-                              <Tag className="h-3 w-3" />
-                              Manage Tags
-                            </Link>
-                          </DropdownMenuItem>
+                          {video.canManageTags && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem asChild>
+                                <Link href={`/projects/${projectId}/settings#comment-tags`} className="gap-2 text-muted-foreground">
+                                  <Tag className="h-3 w-3" />
+                                  Manage Tags
+                                </Link>
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}

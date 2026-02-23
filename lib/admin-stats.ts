@@ -202,35 +202,63 @@ export const getCachedUserMediaStorage = unstable_cache(
         const userStorage: Record<string, { total: number, voice: number, image: number }> = {};
         try {
             const fileSizes = await listAllR2FileSizes();
+            const seenKeys = new Set<string>();
 
             const mediaComments = await db.comment.findMany({
-                where: { OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }], authorId: { not: null } },
-                select: { authorId: true, voiceUrl: true, imageUrl: true }
+                where: { OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }] },
+                select: {
+                    voiceUrl: true,
+                    imageUrl: true,
+                    version: {
+                        select: {
+                            video: {
+                                select: {
+                                    project: {
+                                        select: {
+                                            workspace: {
+                                                select: { ownerId: true },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
             });
 
             for (const comment of mediaComments) {
-                if (!comment.authorId) continue;
+                const billedUserId = comment.version.video.project.workspace.ownerId;
+                if (!billedUserId) continue;
 
-                if (!userStorage[comment.authorId]) {
-                    userStorage[comment.authorId] = { total: 0, voice: 0, image: 0 };
+                if (!userStorage[billedUserId]) {
+                    userStorage[billedUserId] = { total: 0, voice: 0, image: 0 };
                 }
 
                 if (comment.voiceUrl) {
                     const keyParts = comment.voiceUrl.split('/');
                     const filename = keyParts[keyParts.length - 1];
                     const r2Key = `voice/${filename}`;
-                    const size = fileSizes.get(r2Key) || 0;
-                    userStorage[comment.authorId].voice += size;
-                    userStorage[comment.authorId].total += size;
+                    const dedupeKey = `${billedUserId}:${r2Key}`;
+                    if (!seenKeys.has(dedupeKey)) {
+                        seenKeys.add(dedupeKey);
+                        const size = fileSizes.get(r2Key) || 0;
+                        userStorage[billedUserId].voice += size;
+                        userStorage[billedUserId].total += size;
+                    }
                 }
 
                 if (comment.imageUrl) {
                     const keyParts = comment.imageUrl.split('/');
                     const filename = keyParts[keyParts.length - 1];
                     const r2Key = `images/${filename}`;
-                    const size = fileSizes.get(r2Key) || 0;
-                    userStorage[comment.authorId].image += size;
-                    userStorage[comment.authorId].total += size;
+                    const dedupeKey = `${billedUserId}:${r2Key}`;
+                    if (!seenKeys.has(dedupeKey)) {
+                        seenKeys.add(dedupeKey);
+                        const size = fileSizes.get(r2Key) || 0;
+                        userStorage[billedUserId].image += size;
+                        userStorage[billedUserId].total += size;
+                    }
                 }
             }
         } catch (err) {

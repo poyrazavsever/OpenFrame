@@ -310,6 +310,7 @@ model Comment {
   // Guest author info (when authorId is null)
   guestName     String?
   guestEmail    String?
+  guestIdentityId String?
   
   // Video version relation
   versionId     String
@@ -326,6 +327,7 @@ model Comment {
   @@index([versionId])
   @@index([parentId])
   @@index([authorId])
+  @@index([guestIdentityId])
   @@index([timestamp])
   @@index([tagId])
   @@index([versionId, isResolved, timestamp])
@@ -376,6 +378,7 @@ model ShareLink {
   
   // Settings
   allowGuests Boolean         @default(true) // Allow comments without account
+  allowDownloads Boolean      @default(false) // Allow downloading video via share link
   
   // Timestamps
   createdAt   DateTime        @default(now())

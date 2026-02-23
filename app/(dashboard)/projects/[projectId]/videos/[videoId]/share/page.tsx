@@ -17,6 +17,7 @@ interface ShareLinkData {
   id: string;
   token: string;
   allowGuests: boolean;
+  allowDownloads: boolean;
   hasPassword: boolean;
 }
 
@@ -38,6 +39,7 @@ export default function VideoSharePage({ params }: VideoSharePageProps) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [hasPassword, setHasPassword] = useState(false);
   const [password, setPassword] = useState('');
+  const [allowDownloads, setAllowDownloads] = useState(false);
 
   useEffect(() => {
     params.then(({ projectId: nextProjectId, videoId: nextVideoId }) => {
@@ -65,10 +67,12 @@ export default function VideoSharePage({ params }: VideoSharePageProps) {
 
         setShareUrl(payload.data.shareUrl);
         setHasPassword(!!payload.data.link?.hasPassword);
+        setAllowDownloads(!!payload.data.link?.allowDownloads);
       } catch {
         setError('Failed to load share link');
         setShareUrl(null);
         setHasPassword(false);
+        setAllowDownloads(false);
       } finally {
         setLoading(false);
       }
@@ -94,7 +98,7 @@ export default function VideoSharePage({ params }: VideoSharePageProps) {
       const response = await fetch(`/api/projects/${projectId}/videos/${videoId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowGuests: true }),
+        body: JSON.stringify({ allowGuests: true, allowDownloads }),
       });
 
       const payload = (await response.json()) as ShareResponse;
@@ -105,6 +109,7 @@ export default function VideoSharePage({ params }: VideoSharePageProps) {
 
       setShareUrl(payload.data.shareUrl);
       setHasPassword(!!payload.data.link?.hasPassword);
+      setAllowDownloads(!!payload.data.link?.allowDownloads);
       setPassword('');
     } catch {
       setError('Failed to create share link');
@@ -132,6 +137,7 @@ export default function VideoSharePage({ params }: VideoSharePageProps) {
 
       setShareUrl(null);
       setHasPassword(false);
+      setAllowDownloads(false);
       setPassword('');
     } catch {
       setError('Failed to revoke share link');
@@ -165,9 +171,38 @@ export default function VideoSharePage({ params }: VideoSharePageProps) {
       const data = (payload as ShareResponse).data;
       setShareUrl(data.shareUrl);
       setHasPassword(!!data.link?.hasPassword);
+      setAllowDownloads(!!data.link?.allowDownloads);
       setPassword('');
     } catch {
       setError('Failed to update link security');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const updateDownloadSetting = async (nextAllowDownloads: boolean) => {
+    if (!projectId || !videoId || !shareUrl) return;
+
+    setSubmitting(true);
+    setError('');
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/videos/${videoId}/share`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowDownloads: nextAllowDownloads }),
+      });
+      const payload = (await response.json().catch(() => null)) as ShareResponse | { error?: string } | null;
+      if (!response.ok || ('error' in (payload || {}) && payload?.error)) {
+        setError((payload as { error?: string } | null)?.error || 'Failed to update download setting');
+        return;
+      }
+      const data = (payload as ShareResponse).data;
+      setShareUrl(data.shareUrl);
+      setAllowDownloads(!!data.link?.allowDownloads);
+      setHasPassword(!!data.link?.hasPassword);
+    } catch {
+      setError('Failed to update download setting');
     } finally {
       setSubmitting(false);
     }
@@ -220,6 +255,29 @@ export default function VideoSharePage({ params }: VideoSharePageProps) {
                     Revoke Link
                   </Button>
                 </div>
+                <div className="rounded-lg border p-3 space-y-2">
+                  <div>
+                    <p className="text-sm font-medium">Video download</p>
+                    <p className="text-xs text-muted-foreground">Allow viewers with this link to download</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant={allowDownloads ? 'default' : 'outline'}
+                      disabled={submitting || allowDownloads}
+                      onClick={() => updateDownloadSetting(true)}
+                    >
+                      Allow Download
+                    </Button>
+                    <Button
+                      variant={!allowDownloads ? 'default' : 'outline'}
+                      disabled={submitting || !allowDownloads}
+                      onClick={() => updateDownloadSetting(false)}
+                    >
+                      Block Download
+                    </Button>
+                  </div>
+                </div>
+
                 <div className="rounded-lg border p-3 space-y-2">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     {hasPassword ? <ShieldCheck className="h-4 w-4 text-green-600" /> : <Lock className="h-4 w-4" />}

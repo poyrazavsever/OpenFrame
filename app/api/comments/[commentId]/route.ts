@@ -4,7 +4,10 @@ import { auth } from '@/lib/auth';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { rateLimit } from '@/lib/rate-limit';
+import { validateShareLinkAccess } from '@/lib/share-links';
+import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
+import { getGuestIdentityFromRequest } from '@/lib/guest-identity';
 
 type RouteParams = { params: Promise<{ commentId: string }> };
 
@@ -125,10 +128,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
         const session = await auth();
         const { commentId } = await params;
-
-        if (!session?.user?.id) {
-            return apiErrors.unauthorized();
-        }
+        const body = await request.json();
+        const { content, isResolved, tagId, annotationData } = body;
 
         const comment = await db.comment.findUnique({
             where: { id: commentId },
@@ -138,9 +139,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
                         video: {
                             include: {
                                 project: {
-                                    include: {
-                                        members: { where: { userId: session.user.id } },
-                                    },
+                                    include: { members: true },
                                 },
                             },
                         },
@@ -154,18 +153,25 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         }
 
         const project = comment.version.video.project;
-        const isOwner = project.ownerId === session.user.id;
-        const isAuthor = comment.authorId === session.user.id;
-        const isMember = project.members.length > 0;
+        const userId = session?.user?.id ?? null;
+        const isOwner = userId === project.ownerId;
+        const isAuthor = !!userId && comment.authorId === userId;
+        const isMember = !!userId && project.members.some((member) => member.userId === userId);
+        const guestIdentityId = !userId ? getGuestIdentityFromRequest(request) : null;
+        const isGuestAuthor = !userId
+            && !comment.authorId
+            && !!comment.guestIdentityId
+            && guestIdentityId === comment.guestIdentityId;
+        const canEditOwnContent = isAuthor || isGuestAuthor;
 
         // Check workspace membership for resolve permissions
         let isWorkspaceMember = false;
-        if (!isOwner && !isMember && session.user.id) {
+        if (!isOwner && !isMember && userId) {
             const wsMember = await db.workspaceMember.findUnique({
                 where: {
                     workspaceId_userId: {
                         workspaceId: project.workspaceId,
-                        userId: session.user.id,
+                        userId,
                     },
                 },
             });
@@ -173,19 +179,33 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
                 where: { id: project.workspaceId },
                 select: { ownerId: true },
             });
-            isWorkspaceMember = !!wsMember || wsOwner?.ownerId === session.user.id;
+            isWorkspaceMember = !!wsMember || wsOwner?.ownerId === userId;
         }
 
-        const body = await request.json();
-        const { content, isResolved, tagId, annotationData } = body;
+        if (!userId && !isGuestAuthor) {
+            const shareSession = getShareSessionFromRequest(request, comment.version.video.id);
+            const shareAccess = shareSession
+                ? await validateShareLinkAccess({
+                    token: shareSession.token,
+                    projectId: project.id,
+                    videoId: comment.version.video.id,
+                    requiredPermission: 'COMMENT',
+                    passwordVerified: shareSession.passwordVerified,
+                })
+                : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
+            const hasGuestAccess = project.visibility === 'PUBLIC' || (shareAccess.canComment && shareAccess.allowGuests);
+            if (!hasGuestAccess) {
+                return apiErrors.forbidden('Access denied');
+            }
+        }
 
         // Only author can edit content or tag
-        if ((content !== undefined || tagId !== undefined || annotationData !== undefined) && !isAuthor) {
+        if ((content !== undefined || tagId !== undefined || annotationData !== undefined) && !canEditOwnContent) {
             return apiErrors.forbidden('Only the author can edit comment content');
         }
 
         // Owner, author, members, or workspace members can resolve/unresolve
-        if (isResolved !== undefined && !isOwner && !isAuthor && !isMember && !isWorkspaceMember) {
+        if (isResolved !== undefined && !isOwner && !canEditOwnContent && !isMember && !isWorkspaceMember) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -213,7 +233,26 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        const response = successResponse(updatedComment);
+        const { guestIdentityId: _updatedGuestIdentityId, ...updatedCommentData } = updatedComment;
+        const response = successResponse({
+            ...updatedCommentData,
+            canEdit: canEditOwnContent,
+            canDelete: canEditOwnContent || isOwner,
+            replies: updatedComment.replies.map((reply) => {
+                const canEditReply = !!userId
+                    ? reply.authorId === userId
+                    : !!guestIdentityId
+                    && !reply.authorId
+                    && !!reply.guestIdentityId
+                    && reply.guestIdentityId === guestIdentityId;
+                const { guestIdentityId: _replyGuestIdentityId, ...replyData } = reply;
+                return {
+                    ...replyData,
+                    canEdit: canEditReply,
+                    canDelete: canEditReply || isOwner,
+                };
+            }),
+        });
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
         console.error('Error updating comment:', error);
@@ -230,13 +269,18 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         const session = await auth();
         const { commentId } = await params;
 
-        if (!session?.user?.id) {
-            return apiErrors.unauthorized();
-        }
-
         const comment = await db.comment.findUnique({
             where: { id: commentId },
             include: {
+                version: {
+                    include: {
+                        video: {
+                            include: {
+                                project: true,
+                            },
+                        },
+                    },
+                },
                 replies: { select: { voiceUrl: true, imageUrl: true } },
             },
         });
@@ -245,9 +289,37 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Comment');
         }
 
-        const isAuthor = comment.authorId === session.user.id;
+        const userId = session?.user?.id ?? null;
+        const isAuthor = !!userId && comment.authorId === userId;
 
-        if (!isAuthor) {
+        let canDeleteOwnComment = isAuthor;
+        if (!userId) {
+            const guestIdentityId = getGuestIdentityFromRequest(request);
+            const isGuestAuthor = !comment.authorId
+                && !!comment.guestIdentityId
+                && guestIdentityId === comment.guestIdentityId;
+
+            if (isGuestAuthor) {
+                const project = comment.version.video.project;
+                const shareSession = getShareSessionFromRequest(request, comment.version.video.id);
+                const shareAccess = shareSession
+                    ? await validateShareLinkAccess({
+                        token: shareSession.token,
+                        projectId: project.id,
+                        videoId: comment.version.video.id,
+                        requiredPermission: 'COMMENT',
+                        passwordVerified: shareSession.passwordVerified,
+                    })
+                    : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
+                const hasGuestAccess = project.visibility === 'PUBLIC' || (shareAccess.canComment && shareAccess.allowGuests);
+                if (!hasGuestAccess) {
+                    return apiErrors.forbidden('Access denied');
+                }
+                canDeleteOwnComment = true;
+            }
+        }
+
+        if (!canDeleteOwnComment) {
             return apiErrors.forbidden('You can only delete your own comments');
         }
 

@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { ProjectVisibility } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
+import { DEFAULT_COMMENT_TAGS } from '@/lib/comment-tags';
 
 // GET /api/projects - List all projects for the authenticated user
 export async function GET(request: NextRequest) {
@@ -137,19 +138,31 @@ export async function POST(request: NextRequest) {
             return apiErrors.forbidden('Only workspace owners and admins can create projects');
         }
 
-        const project = await db.project.create({
-            data: {
-                name: name.trim(),
-                description: description?.trim() || null,
-                slug,
-                visibility: visibility || ProjectVisibility.PRIVATE,
-                ownerId: session.user.id,
-                workspaceId,
-            },
-            include: {
-                owner: { select: { id: true, name: true, image: true } },
-                _count: { select: { videos: true, members: true } },
-            },
+        const project = await db.$transaction(async (tx) => {
+            const createdProject = await tx.project.create({
+                data: {
+                    name: name.trim(),
+                    description: description?.trim() || null,
+                    slug,
+                    visibility: visibility || ProjectVisibility.PRIVATE,
+                    ownerId: session.user.id,
+                    workspaceId,
+                },
+                include: {
+                    owner: { select: { id: true, name: true, image: true } },
+                    _count: { select: { videos: true, members: true } },
+                },
+            });
+
+            await tx.commentTag.createMany({
+                data: DEFAULT_COMMENT_TAGS.map((tag) => ({
+                    ...tag,
+                    projectId: createdProject.id,
+                })),
+                skipDuplicates: true,
+            });
+
+            return createdProject;
         });
 
         const response = successResponse(project, 201);
