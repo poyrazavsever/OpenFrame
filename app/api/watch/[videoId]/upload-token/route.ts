@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { auth, checkProjectAccess } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { rateLimit } from '@/lib/rate-limit';
+import { isTrustedSameOriginRequest } from '@/lib/request-origin';
 import { validateShareLinkAccess } from '@/lib/share-links';
 import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
@@ -20,7 +21,7 @@ function validateSameOriginRequest(request: NextRequest): Response | null {
     return apiErrors.forbidden('Missing Origin header');
   }
 
-  if (origin !== request.nextUrl.origin) {
+  if (!isTrustedSameOriginRequest(request)) {
     return apiErrors.forbidden('Cross-origin requests are not allowed');
   }
 

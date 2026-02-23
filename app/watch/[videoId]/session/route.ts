@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { checkRateLimit, getClientIp, rateLimit, rateLimitHeaders } from '@/lib/rate-limit';
+import { isTrustedSameOriginRequest } from '@/lib/request-origin';
 import { MAX_SHARE_PASSWORD_LENGTH, validateShareLinkAccess } from '@/lib/share-links';
 import {
   createPendingShareValue,
@@ -38,7 +39,7 @@ function validateSameOriginRequest(request: NextRequest): NextResponse | null {
     return NextResponse.json({ error: 'Missing Origin header' }, { status: 403 });
   }
 
-  if (origin !== request.nextUrl.origin) {
+  if (!isTrustedSameOriginRequest(request)) {
     return NextResponse.json({ error: 'Cross-origin requests are not allowed' }, { status: 403 });
   }
 
