@@ -1,12 +1,13 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
 import { notifyProjectOwner } from '@/lib/notifications';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
+const SAFE_IMAGE_PATH = /^\/api\/upload\/image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+const SAFE_AUDIO_PATH = /^\/api\/upload\/audio\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
 // GET /api/versions/[versionId]/comments
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -218,19 +219,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return apiErrors.badRequest('Guest name is required for guest comments');
         }
 
-        // Validate voice URL uses safe scheme (allow internal /api/ paths)
-        if (voiceUrl && !voiceUrl.startsWith('/api/')) {
-            const voiceUrlError = validateOptionalUrl(voiceUrl, 'Voice URL');
-            if (voiceUrlError) {
-                return apiErrors.badRequest(voiceUrlError);
-            }
+        if (voiceUrl && !SAFE_AUDIO_PATH.test(voiceUrl)) {
+            return apiErrors.badRequest('Voice URL must reference an uploaded audio file');
         }
 
-        if (imageUrl && !imageUrl.startsWith('/api/')) {
-            const imageUrlError = validateOptionalUrl(imageUrl, 'Image URL');
-            if (imageUrlError) {
-                return apiErrors.badRequest(imageUrlError);
-            }
+        if (imageUrl && !SAFE_IMAGE_PATH.test(imageUrl)) {
+            return apiErrors.badRequest('Image URL must reference an uploaded image file');
         }
 
         const comment = await db.comment.create({

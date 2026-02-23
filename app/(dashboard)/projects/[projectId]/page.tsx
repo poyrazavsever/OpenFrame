@@ -2,25 +2,11 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
   ArrowLeft,
-  Globe,
-  Lock,
-  UserPlus,
 } from 'lucide-react';
 import { GuestGate } from '@/components/guest-gate';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { ProjectContentClient } from './project-content-client';
-
-function VisibilityIcon({ visibility }: { visibility: string }) {
-  switch (visibility) {
-    case 'PUBLIC':
-      return <Globe className="h-3.5 w-3.5" />;
-    case 'INVITE':
-      return <UserPlus className="h-3.5 w-3.5" />;
-    default:
-      return <Lock className="h-3.5 w-3.5" />;
-  }
-}
 
 function formatDuration(seconds: number | null): string {
   if (!seconds) return '0:00';

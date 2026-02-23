@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Bell, Send, Mail, CheckCircle2, AlertCircle, Loader2, ExternalLink, Globe } from 'lucide-react';
+import { Bell, Send, Mail, CheckCircle2, AlertCircle, Loader2, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';

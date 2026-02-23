@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -12,16 +12,14 @@ import { Input } from '@/components/ui/input';
  * Only renders children after the guest confirms their name.
  */
 export function GuestGate({ children }: { children: ReactNode }) {
-  const [guestName, setGuestName] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('openframe_guest_name');
-    if (saved) {
-      setGuestName(saved);
-      setConfirmed(true);
-    }
-  }, []);
+  const [guestName, setGuestName] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('openframe_guest_name') ?? '';
+  });
+  const [confirmed, setConfirmed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(localStorage.getItem('openframe_guest_name'));
+  });
 
   if (confirmed) {
     return <>{children}</>;

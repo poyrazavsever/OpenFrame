@@ -84,7 +84,7 @@ export const youtubeProvider: VideoProvider = {
 
       setCachedMetadata(cacheKey, metadata);
       return metadata;
-    } catch (error) {
+    } catch {
       // Fallback with minimal data
       const fallback: VideoMetadata = {
         title: 'YouTube Video',

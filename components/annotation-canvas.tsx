@@ -39,6 +39,7 @@ export const AnnotationCanvas = forwardRef<AnnotationCanvasHandle, AnnotationCan
     const [color, setColor] = useState(DEFAULT_COLOR);
     const [width, setWidth] = useState(DEFAULT_WIDTH);
     const isDrawingRef = useRef(false);
+    void onConfirm;
 
     // Expose getStrokes so parent can grab current drawing without confirm
     useImperativeHandle(ref, () => ({
@@ -158,11 +159,6 @@ export const AnnotationCanvas = forwardRef<AnnotationCanvasHandle, AnnotationCan
     const handleClear = useCallback(() => {
         setStrokes([]);
     }, []);
-
-    const handleConfirm = useCallback(() => {
-        if (strokes.length === 0) return;
-        onConfirm?.(strokes);
-    }, [strokes, onConfirm]);
 
     // View mode: click to dismiss
     const handleViewClick = useCallback((e: React.MouseEvent) => {

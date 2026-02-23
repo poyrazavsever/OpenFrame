@@ -26,7 +26,7 @@ function createPool(connectionString: string): Pool {
   const pool = new Pool(poolConfig);
 
   // Add error handling for pool errors
-  pool.on('error', (err, client) => {
+  pool.on('error', (err) => {
     console.error('Unexpected database pool error:', err.message);
     // Don't crash the app on unexpected pool errors
   });

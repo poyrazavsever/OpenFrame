@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { List } from 'react-window';
 import Hls, { type Level } from 'hls.js';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -23,7 +22,6 @@ import {
   CheckCircle2,
   Circle,
   ChevronDown,
-  ChevronUp,
   MoreVertical,
   Plus,
   Loader2,
@@ -80,7 +78,7 @@ import { cn } from '@/lib/utils';
 import { parseVideoUrl, getThumbnailUrl, fetchVideoMetadata, type VideoSource } from '@/lib/video-providers';
 import { AnnotationCanvas, type AnnotationStroke, type AnnotationCanvasHandle } from '@/components/annotation-canvas';
 import { Linkify } from '@/components/linkify';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import * as tus from 'tus-js-client';
 import { UploadCloud, FileVideo } from 'lucide-react';
 
@@ -340,7 +338,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
   const editAnnotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
-  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
+  const [, setDeletingCommentId] = useState<string | null>(null);
   const isMutatingRef = useRef(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
@@ -543,6 +541,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       video?.versions?.find((v) => v.isActive) ||
       video?.versions?.[0];
   }, [video?.versions, activeVersionId]);
+  const activeProviderId = activeVersion?.providerId;
+  const activeVersionDuration = activeVersion?.duration;
 
   const isDownloadingVideo = activeDownloadTarget !== null;
 
@@ -679,7 +679,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       }
     }
     fetchTags();
-  }, [projectId]);
+  }, [projectId, selectedTagId]);
 
   // Load YouTube API immediately on component mount (async, non-blocking)
   useEffect(() => {
@@ -703,9 +703,9 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   }, [isApiLoaded]);
 
   useEffect(() => {
-    if (!activeVersion) return;
-    const isYoutube = activeVersion.providerId === 'youtube';
-    const isBunny = activeVersion.providerId === 'bunny';
+    if (!activeProviderId) return;
+    const isYoutube = activeProviderId === 'youtube';
+    const isBunny = activeProviderId === 'bunny';
 
     if (isYoutube && !isApiLoaded) return;
     if (!isYoutube && !isBunny) return;
@@ -1041,16 +1041,16 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         bunnyRetryTimerRef.current = null;
       }
     };
-  }, [activeVersionId, embedUrl, isApiLoaded, video?.isAuthenticated, videoId]);
+  }, [activeProviderId, activeVersionId, embedUrl, isApiLoaded, video?.isAuthenticated, videoId]);
 
   // Save detected duration to DB if the version doesn't have one stored
   useEffect(() => {
-    if (!videoDuration || !activeVersion || !propProjectId) return;
-    if (activeVersion.duration && activeVersion.duration > 0) return;
+    if (!videoDuration || !activeVersionId || !propProjectId) return;
+    if (activeVersionDuration && activeVersionDuration > 0) return;
 
     const roundedDuration = Math.round(videoDuration);
     // Fire-and-forget PATCH to save duration
-    fetch(`/api/projects/${propProjectId}/videos/${videoId}/versions/${activeVersion.id}`, {
+    fetch(`/api/projects/${propProjectId}/videos/${videoId}/versions/${activeVersionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ duration: roundedDuration }),
@@ -1062,11 +1062,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       return {
         ...prev,
         versions: prev.versions.map((v) =>
-          v.id === activeVersion.id ? { ...v, duration: roundedDuration } : v
+          v.id === activeVersionId ? { ...v, duration: roundedDuration } : v
         ),
       };
     });
-  }, [videoDuration, activeVersion?.id, activeVersion?.duration, propProjectId, videoId]);
+  }, [videoDuration, activeVersionDuration, activeVersionId, propProjectId, videoId]);
 
   // Load watch progress when video is loaded (authenticated users only)
   const loadWatchProgress = useCallback(async (showPrompt = true) => {
@@ -1236,7 +1236,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setShowResumePrompt(false);
       setSavedProgress(null);
     }
-  }, [savedProgress, activeVersion?.providerId]);
+  }, [savedProgress]);
 
   // Dismiss resume prompt
   const handleDismissResume = useCallback(() => {
@@ -1510,7 +1510,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     }
   }, [isDragging, currentTime, handleSeekToTimestamp]);
 
-  const handleAddComment = useCallback(async (voiceData?: { url: string; duration: number }, imageData?: { url: string }) => {
+  const handleAddComment = useCallback(async (voiceData?: { url: string; duration: number }) => {
     if (!voiceData && !imageBlob && !commentText.trim() && !annotationStrokes && !isAnnotating) return;
     if (!activeVersion) return;
 
@@ -1625,7 +1625,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         });
         toast.error('Failed to add comment');
       }
-    } catch (err) {
+    } catch {
       setVideo((prev) => {
         if (!prev) return prev;
         return {
@@ -1643,7 +1643,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingImage(false);
       isMutatingRef.current = false;
     }
-  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, selectedTagId, availableTags, imageBlob, annotationStrokes, isAnnotating]);
+  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, guestName, currentUserName, selectedTagId, availableTags, imageBlob, annotationStrokes, isAnnotating]);
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>, isReply: boolean = false) => {
     const file = e.target.files?.[0];
@@ -1870,7 +1870,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         clearInterval(recordingTimerRef.current);
       }
     };
-  }, []);
+  }, [stopVoiceTracking]);
 
   const submitCommentWithMedia = useCallback(async () => {
     if (!activeVersion) return;
@@ -1886,8 +1886,6 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
     try {
       let voiceData: { url: string; duration: number } | undefined;
-      let imageData: { url: string } | undefined;
-
       if (audioBlob) {
         const formData = new FormData();
         formData.append('audio', audioBlob, 'recording.webm');
@@ -1897,7 +1895,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         voiceData = { url: uploadData.data.url, duration: recordingTime };
       }
 
-      await handleAddComment(voiceData, imageData); // Image is uploaded inside handleAddComment for both text/image cases
+      await handleAddComment(voiceData); // Image is uploaded inside handleAddComment for both text/image cases
 
       setAudioBlob(null);
       setRecordingTime(0);
@@ -1958,7 +1956,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           });
           toast.error('Failed to update comment');
         }
-      } catch (err) {
+      } catch {
         setVideo((prev) => {
           if (!prev) return prev;
           return {
@@ -2103,7 +2101,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         });
         toast.error('Failed to add reply');
       }
-    } catch (err) {
+    } catch {
       setVideo((prev) => {
         if (!prev) return prev;
         return {
@@ -2128,7 +2126,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingReplyImage(false);
       isMutatingRef.current = false;
     }
-  }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, guestName, replyImageBlob]);
+  }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, guestName, currentUserName, replyImageBlob]);
 
   const startReplyRecording = useCallback(async () => {
     try {
@@ -4402,6 +4400,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             onClick={() => setPreviewImage(null)}
           >
             {previewImage && (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={previewImage}
                 alt="Preview"

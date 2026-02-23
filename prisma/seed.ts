@@ -121,7 +121,7 @@ async function main() {
         },
     });
 
-    const clientProject = await prisma.project.create({
+    await prisma.project.create({
         data: {
             name: 'Client: XYZ Corp Promo',
             description: 'Promotional video for XYZ Corporation product launch.',
@@ -173,7 +173,7 @@ async function main() {
         },
     });
 
-    const aiToolsVideo = await prisma.video.create({
+    await prisma.video.create({
         data: {
             title: 'Best AI Tools for Developers 2025',
             description: 'A curated list of AI tools that actually boost productivity.',
@@ -198,7 +198,7 @@ async function main() {
     });
 
     // Tutorial video
-    const reactVideo = await prisma.video.create({
+    await prisma.video.create({
         data: {
             title: 'React Server Components Deep Dive',
             description: 'Understanding RSC from first principles.',

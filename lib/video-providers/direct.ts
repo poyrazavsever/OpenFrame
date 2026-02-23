@@ -1,4 +1,4 @@
-import type { VideoProvider, VideoMetadata, EmbedOptions, ThumbnailSize } from './types';
+import type { VideoProvider, VideoMetadata, EmbedOptions } from './types';
 
 // Direct video URL patterns (for future self-hosted videos)
 const DIRECT_VIDEO_PATTERNS = [
@@ -49,7 +49,8 @@ export const directProvider: VideoProvider = {
     return `${videoId}${queryString ? `#t=${options.startTime}` : ''}`;
   },
 
-  getThumbnailUrl(videoId: string, size: ThumbnailSize = 'medium'): string {
+  getThumbnailUrl(videoId: string): string {
+    void videoId;
     // For direct uploads, thumbnail would be generated server-side
     // Return a placeholder for now
     return '/placeholder-video-thumbnail.png';

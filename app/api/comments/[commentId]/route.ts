@@ -107,7 +107,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         }
 
         // Strip internal project data from response
-        const { version: _version, ...commentData } = comment;
+        const commentData = { ...comment } as Omit<typeof comment, 'version'> & { version?: unknown };
+        delete commentData.version;
         const response = successResponse(commentData);
         return withCacheControl(response, 'private, no-cache');
     } catch (error) {
