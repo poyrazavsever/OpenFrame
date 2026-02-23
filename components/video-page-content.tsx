@@ -1452,8 +1452,20 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const handleSeekToTimestamp = useCallback((timestamp: number, annotation?: string | null) => {
     setCurrentTime(timestamp);
     if (playerRef.current?.seekTo) {
+      const playerState = playerRef.current.getPlayerState?.();
+      const ytPlayingState = window.YT?.PlayerState?.PLAYING ?? 1;
+      const ytBufferingState = window.YT?.PlayerState?.BUFFERING ?? 3;
+      const wasPlayingBeforeSeek = typeof playerState === 'number'
+        ? playerState === ytPlayingState || playerState === ytBufferingState
+        : isPlaying;
+
       playerRef.current.seekTo(timestamp, true);
-      playerRef.current.pauseVideo();
+      // Preserve playback state when seeking so timeline clicks do not force-pause.
+      if (wasPlayingBeforeSeek) {
+        playerRef.current.playVideo();
+      } else {
+        playerRef.current.pauseVideo();
+      }
     }
     // Show annotation overlay if present
     if (annotation) {
@@ -1466,7 +1478,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     } else {
       setViewingAnnotation(null);
     }
-  }, []);
+  }, [isPlaying]);
 
   const handleMuteToggle = useCallback(() => {
     if (!playerRef.current) return;
