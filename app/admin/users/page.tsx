@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
@@ -74,6 +75,53 @@ function getSortIndicator(column: SortBy, activeSortBy: SortBy, activeSortDirect
     return activeSortDirection === 'asc' ? '↑' : '↓';
 }
 
+function canSortInDb(sortBy: SortBy): boolean {
+    return sortBy === 'user'
+        || sortBy === 'joinedDate'
+        || sortBy === 'workspacesOwned'
+        || sortBy === 'projectsOwned'
+        || sortBy === 'totalComments';
+}
+
+function getUsersOrderBy(sortBy: SortBy, sortDirection: SortDirection): Prisma.UserOrderByWithRelationInput[] {
+    const createdAtTieBreaker: Prisma.UserOrderByWithRelationInput = { createdAt: 'desc' };
+
+    if (sortBy === 'user') {
+        return [
+            { name: sortDirection },
+            { email: sortDirection },
+            createdAtTieBreaker,
+        ];
+    }
+
+    if (sortBy === 'joinedDate') {
+        return [{ createdAt: sortDirection }];
+    }
+
+    if (sortBy === 'workspacesOwned') {
+        return [
+            { ownedWorkspaces: { _count: sortDirection } },
+            createdAtTieBreaker,
+        ];
+    }
+
+    if (sortBy === 'projectsOwned') {
+        return [
+            { projects: { _count: sortDirection } },
+            createdAtTieBreaker,
+        ];
+    }
+
+    if (sortBy === 'totalComments') {
+        return [
+            { comments: { _count: sortDirection } },
+            createdAtTieBreaker,
+        ];
+    }
+
+    return [createdAtTieBreaker];
+}
+
 export default async function AdminUsersPage({
     searchParams
 }: {
@@ -86,93 +134,113 @@ export default async function AdminUsersPage({
 
     const resolvedSearchParams = await searchParams;
     const requestedPage = Number(resolvedSearchParams?.page) || 1;
-    const pageSize = 20;
     const sortBy: SortBy = isSortBy(resolvedSearchParams?.sortBy) ? resolvedSearchParams.sortBy : 'joinedDate';
     const sortDirection: SortDirection =
         resolvedSearchParams?.sortDirection === 'asc' || resolvedSearchParams?.sortDirection === 'desc'
             ? resolvedSearchParams.sortDirection
             : getDefaultSortDirection(sortBy);
-
-    const [users, userStorage, userBunnyStorage, userDownloadEgress, bunnyStorageStats] = await Promise.all([
-        db.user.findMany({
-            orderBy: { createdAt: 'desc' },
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                createdAt: true,
-                ownedWorkspaces: {
-                    select: {
-                        _count: {
-                            select: {
-                                members: true,
-                            }
-                        }
-                    }
-                },
-                _count: {
-                    select: {
-                        ownedWorkspaces: true,
-                        projects: true,
-                        comments: true,
-                    }
-                }
-            }
-        }),
+    const pageSize = 20;
+    const [totalUsers, userStorage, userBunnyStorage, userDownloadEgress, bunnyStorageStats] = await Promise.all([
+        db.user.count(),
         getCachedUserMediaStorage(),
         getCachedUserBunnyStorage(),
         getCachedUserDownloadEgress(),
         getCachedBunnyStorageStats(),
     ]);
-
-    const usersWithMetrics = users.map((user) => ({
-        ...user,
-        invitedMembersCount: user.ownedWorkspaces.reduce(
-            (total, workspace) => total + workspace._count.members,
-            0
-        ),
-        bunnyUploadBytes: userBunnyStorage[user.id] || 0,
-        downloadEgressBytes: userDownloadEgress[user.id] || 0,
-        mediaStorageBytes: userStorage[user.id]?.total || 0,
-    }));
-
-    const sortedUsers = [...usersWithMetrics].sort((a, b) => {
-        let comparison = 0;
-
-        if (sortBy === 'user') {
-            const aLabel = (a.name || a.email || 'Anonymous').toLowerCase();
-            const bLabel = (b.name || b.email || 'Anonymous').toLowerCase();
-            comparison = aLabel.localeCompare(bLabel);
-        } else if (sortBy === 'joinedDate') {
-            comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-        } else if (sortBy === 'workspacesOwned') {
-            comparison = a._count.ownedWorkspaces - b._count.ownedWorkspaces;
-        } else if (sortBy === 'invitedMembers') {
-            comparison = a.invitedMembersCount - b.invitedMembersCount;
-        } else if (sortBy === 'projectsOwned') {
-            comparison = a._count.projects - b._count.projects;
-        } else if (sortBy === 'totalComments') {
-            comparison = a._count.comments - b._count.comments;
-        } else if (sortBy === 'bunnyUpload') {
-            comparison = a.bunnyUploadBytes - b.bunnyUploadBytes;
-        } else if (sortBy === 'downloadEgress') {
-            comparison = a.downloadEgressBytes - b.downloadEgressBytes;
-        } else if (sortBy === 'mediaStorage') {
-            comparison = a.mediaStorageBytes - b.mediaStorageBytes;
-        }
-
-        if (comparison === 0) {
-            comparison = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        }
-
-        return sortDirection === 'asc' ? comparison : -comparison;
-    });
-
-    const totalUsers = sortedUsers.length;
     const totalPages = Math.max(1, Math.ceil(totalUsers / pageSize));
     const page = Math.min(Math.max(1, requestedPage), totalPages);
     const skip = (page - 1) * pageSize;
-    const paginatedUsers = sortedUsers.slice(skip, skip + pageSize);
+
+    const select = {
+        id: true,
+        name: true,
+        email: true,
+        createdAt: true,
+        ownedWorkspaces: {
+            select: {
+                _count: {
+                    select: {
+                        members: true,
+                    }
+                }
+            }
+        },
+        _count: {
+            select: {
+                ownedWorkspaces: true,
+                projects: true,
+                comments: true,
+            }
+        }
+    } satisfies Prisma.UserSelect;
+
+    let paginatedUsers: Array<{
+        id: string;
+        name: string | null;
+        email: string | null;
+        createdAt: Date;
+        ownedWorkspaces: Array<{ _count: { members: number } }>;
+        _count: { ownedWorkspaces: number; projects: number; comments: number };
+        invitedMembersCount: number;
+        bunnyUploadBytes: number;
+        downloadEgressBytes: number;
+        mediaStorageBytes: number;
+    }> = [];
+
+    if (canSortInDb(sortBy)) {
+        const users = await db.user.findMany({
+            skip,
+            take: pageSize,
+            orderBy: getUsersOrderBy(sortBy, sortDirection),
+            select,
+        });
+
+        paginatedUsers = users.map((user) => ({
+            ...user,
+            invitedMembersCount: user.ownedWorkspaces.reduce(
+                (total, workspace) => total + workspace._count.members,
+                0
+            ),
+            bunnyUploadBytes: userBunnyStorage[user.id] || 0,
+            downloadEgressBytes: userDownloadEgress[user.id] || 0,
+            mediaStorageBytes: userStorage[user.id]?.total || 0,
+        }));
+    } else {
+        const users = await db.user.findMany({ select });
+
+        const usersWithMetrics = users.map((user) => ({
+            ...user,
+            invitedMembersCount: user.ownedWorkspaces.reduce(
+                (total, workspace) => total + workspace._count.members,
+                0
+            ),
+            bunnyUploadBytes: userBunnyStorage[user.id] || 0,
+            downloadEgressBytes: userDownloadEgress[user.id] || 0,
+            mediaStorageBytes: userStorage[user.id]?.total || 0,
+        }));
+
+        const sortedUsers = usersWithMetrics.sort((a, b) => {
+            let comparison = 0;
+
+            if (sortBy === 'invitedMembers') {
+                comparison = a.invitedMembersCount - b.invitedMembersCount;
+            } else if (sortBy === 'bunnyUpload') {
+                comparison = a.bunnyUploadBytes - b.bunnyUploadBytes;
+            } else if (sortBy === 'downloadEgress') {
+                comparison = a.downloadEgressBytes - b.downloadEgressBytes;
+            } else if (sortBy === 'mediaStorage') {
+                comparison = a.mediaStorageBytes - b.mediaStorageBytes;
+            }
+
+            if (comparison === 0) {
+                comparison = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            }
+
+            return sortDirection === 'asc' ? comparison : -comparison;
+        });
+
+        paginatedUsers = sortedUsers.slice(skip, skip + pageSize);
+    }
 
     const buildUsersPageHref = (
         targetPage: number,
