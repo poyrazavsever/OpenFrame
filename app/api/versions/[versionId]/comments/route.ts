@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
 import { notifyProjectOwner } from '@/lib/notifications';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
@@ -52,11 +52,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             include: {
                 video: {
                     include: {
-                        project: {
-                            include: {
-                                members: { where: { userId: session?.user?.id || '' } },
-                            },
-                        },
+                        project: true,
                     },
                 },
             },
@@ -67,28 +63,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         }
 
         const project = version.video.project;
+        const access = await checkProjectAccess(project, session?.user?.id);
         const shareSession = getShareSessionFromRequest(request, version.video.id);
-        const isOwner = session?.user?.id === project.ownerId;
-        const isMember = project.members.length > 0;
-        const isPublic = project.visibility === 'PUBLIC';
-
-        // Check workspace membership for access
-        let isWorkspaceMember = false;
-        if (!isOwner && !isMember && !isPublic && session?.user?.id) {
-            const wsMember = await db.workspaceMember.findUnique({
-                where: {
-                    workspaceId_userId: {
-                        workspaceId: project.workspaceId,
-                        userId: session.user.id,
-                    },
-                },
-            });
-            const wsOwner = await db.workspace.findUnique({
-                where: { id: project.workspaceId },
-                select: { ownerId: true },
-            });
-            isWorkspaceMember = !!wsMember || wsOwner?.ownerId === session.user.id;
-        }
 
         const shareAccess = shareSession
             ? await validateShareLinkAccess({
@@ -100,7 +76,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             })
             : { hasAccess: false, requiresPassword: false };
 
-        if (!isOwner && !isMember && !isPublic && !isWorkspaceMember && !shareAccess.hasAccess) {
+        if (!access.hasAccess && !shareAccess.hasAccess) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -208,11 +184,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             include: {
                 video: {
                     include: {
-                        project: {
-                            include: {
-                                members: { where: { userId: session?.user?.id || '' } },
-                            },
-                        },
+                        project: true,
                     },
                 },
             },
@@ -223,28 +195,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         }
 
         const project = version.video.project;
+        const access = await checkProjectAccess(project, session?.user?.id);
         const shareSession = getShareSessionFromRequest(request, version.video.id);
-        const isOwner = session?.user?.id === project.ownerId;
-        const isMember = project.members.length > 0;
-        const isPublic = project.visibility === 'PUBLIC';
-
-        // Check workspace membership for comment access
-        let isWorkspaceMember = false;
-        if (!isOwner && !isMember && !isPublic && session?.user?.id) {
-            const wsMember = await db.workspaceMember.findUnique({
-                where: {
-                    workspaceId_userId: {
-                        workspaceId: project.workspaceId,
-                        userId: session.user.id,
-                    },
-                },
-            });
-            const wsOwner = await db.workspace.findUnique({
-                where: { id: project.workspaceId },
-                select: { ownerId: true },
-            });
-            isWorkspaceMember = !!wsMember || wsOwner?.ownerId === session.user.id;
-        }
 
         const shareAccess = shareSession
             ? await validateShareLinkAccess({
@@ -257,7 +209,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             : { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false };
 
         // Check if user can comment
-        const canComment = isOwner || isMember || isPublic || isWorkspaceMember || shareAccess.canComment;
+        const canComment = access.hasAccess || shareAccess.canComment;
         if (!canComment) {
             return apiErrors.forbidden('Access denied');
         }

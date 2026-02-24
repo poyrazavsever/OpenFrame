@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
-import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { validateUrl, validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
 import { notifyProjectOwner } from '@/lib/notifications';
@@ -19,18 +18,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         // Check project exists and user has access
         const project = await db.project.findUnique({
             where: { id: projectId },
-            include: { members: { where: { userId: session?.user?.id || '' } } },
+            select: { id: true, ownerId: true, workspaceId: true, visibility: true },
         });
 
         if (!project) {
             return apiErrors.notFound('Project');
         }
 
-        const isOwner = session?.user?.id === project.ownerId;
-        const isMember = project.members.length > 0;
-        const isPublic = project.visibility === 'PUBLIC';
-
-        if (!isOwner && !isMember && !isPublic) {
+        const access = await checkProjectAccess(project, session?.user?.id);
+        if (!access.hasAccess) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -78,28 +74,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         // Check project access (must be owner, project admin, or workspace admin)
         const project = await db.project.findUnique({
             where: { id: projectId },
-            include: {
-                members: { where: { userId: session.user.id } },
-                workspace: {
-                    include: {
-                        members: { where: { userId: session.user.id } },
-                    },
-                },
-            },
+            select: { id: true, name: true, ownerId: true, workspaceId: true, visibility: true },
         });
 
         if (!project) {
             return apiErrors.notFound('Project');
         }
 
-        const isOwner = project.ownerId === session.user.id;
-        const membership = project.members[0];
-        const workspaceMembership = project.workspace.members[0];
-        const canEdit = isOwner ||
-            membership?.role === ProjectMemberRole.ADMIN ||
-            workspaceMembership?.role === WorkspaceMemberRole.ADMIN;
-
-        if (!canEdit) {
+        const access = await checkProjectAccess(project, session.user.id, { intent: 'manage' });
+        if (!access.canEdit) {
             return apiErrors.forbidden('Access denied');
         }
 

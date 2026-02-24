@@ -1,51 +1,11 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
-import { ProjectMemberRole, ProjectVisibility } from '@prisma/client';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
 import { cleanupProjectMediaFiles } from '@/lib/r2-cleanup';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
-
-// Helper to check project access
-async function checkProjectAccess(projectId: string, userId: string) {
-    const project = await db.project.findUnique({
-        where: { id: projectId },
-        include: {
-            members: { where: { userId } },
-        },
-    });
-
-    if (!project) return { project: null, role: null, canEdit: false, canDelete: false };
-
-    const isOwner = project.ownerId === userId;
-    const membership = project.members[0];
-    let role: string | null = isOwner ? 'OWNER' : membership?.role || null;
-
-    // Check workspace-level access if not already authorized
-    if (!isOwner && !membership) {
-        const wsMember = await db.workspaceMember.findUnique({
-            where: { workspaceId_userId: { workspaceId: project.workspaceId, userId } },
-        });
-        const wsOwner = await db.workspace.findUnique({
-            where: { id: project.workspaceId },
-            select: { ownerId: true },
-        });
-        if (wsOwner?.ownerId === userId) {
-            role = 'OWNER';
-        } else if (wsMember) {
-            role = wsMember.role; // ADMIN or COMMENTATOR from workspace
-        }
-    }
-
-    return {
-        project,
-        role,
-        canEdit: isOwner || role === 'OWNER' || role === ProjectMemberRole.ADMIN,
-        canDelete: isOwner || role === 'OWNER',
-    };
-}
 
 // GET /api/projects/[projectId] - Get a single project
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -95,30 +55,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Project');
         }
 
-        // Check access
-        const isPublic = project.visibility === ProjectVisibility.PUBLIC;
-        const isOwner = session?.user?.id === project.ownerId;
-        const isMember = project.members.some((m: { userId: string }) => m.userId === session?.user?.id);
-
-        // Check workspace membership
-        let isWorkspaceMember = false;
-        if (!isPublic && !isOwner && !isMember && session?.user?.id) {
-            const wsMember = await db.workspaceMember.findUnique({
-                where: {
-                    workspaceId_userId: {
-                        workspaceId: project.workspaceId,
-                        userId: session.user.id,
-                    },
-                },
-            });
-            const wsOwner = await db.workspace.findUnique({
-                where: { id: project.workspaceId },
-                select: { ownerId: true },
-            });
-            isWorkspaceMember = !!wsMember || wsOwner?.ownerId === session.user.id;
-        }
-
-        if (!isPublic && !isOwner && !isMember && !isWorkspaceMember) {
+        const access = await checkProjectAccess(project, session?.user?.id);
+        if (!access.hasAccess) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -143,8 +81,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             return apiErrors.unauthorized();
         }
 
-        const { canEdit } = await checkProjectAccess(projectId, session.user.id);
-        if (!canEdit) {
+        const projectAccessTarget = await db.project.findUnique({
+            where: { id: projectId },
+            select: { id: true, ownerId: true, workspaceId: true, visibility: true },
+        });
+        const access = projectAccessTarget
+            ? await checkProjectAccess(projectAccessTarget, session.user.id, { intent: 'manage' })
+            : null;
+        if (!access?.canEdit) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -186,13 +130,16 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             return apiErrors.unauthorized();
         }
 
-        const { canDelete, project } = await checkProjectAccess(projectId, session.user.id);
-
+        const project = await db.project.findUnique({
+            where: { id: projectId },
+            select: { id: true, ownerId: true, workspaceId: true, visibility: true },
+        });
         if (!project) {
             return apiErrors.notFound('Project');
         }
 
-        if (!canDelete) {
+        const access = await checkProjectAccess(project, session.user.id, { intent: 'delete' });
+        if (!access.canDelete) {
             return apiErrors.forbidden('Only the project owner can delete it');
         }
 

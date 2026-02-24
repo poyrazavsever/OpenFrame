@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
-import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { validateUrl, validateOptionalUrl } from '@/lib/validation';
 import { rateLimit } from '@/lib/rate-limit';
 import { notifyProjectOwner } from '@/lib/notifications';
@@ -19,9 +18,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const video = await db.video.findFirst({
             where: { id: videoId, projectId },
             include: {
-                project: {
-                    include: { members: { where: { userId: session?.user?.id || '' } } },
-                },
+                project: true,
             },
         });
 
@@ -29,11 +26,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Video');
         }
 
-        const isOwner = session?.user?.id === video.project.ownerId;
-        const isMember = video.project.members.length > 0;
-        const isPublic = video.project.visibility === 'PUBLIC';
-
-        if (!isOwner && !isMember && !isPublic) {
+        const access = await checkProjectAccess(video.project, session?.user?.id);
+        if (!access.hasAccess) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -69,16 +63,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const video = await db.video.findFirst({
             where: { id: videoId, projectId },
             include: {
-                project: {
-                    include: {
-                        members: { where: { userId: session.user.id } },
-                        workspace: {
-                            include: {
-                                members: { where: { userId: session.user.id } },
-                            },
-                        },
-                    },
-                },
+                project: true,
                 versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
             },
         });
@@ -87,14 +72,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Video');
         }
 
-        const isOwner = video.project.ownerId === session.user.id;
-        const membership = video.project.members[0];
-        const workspaceMembership = video.project.workspace.members[0];
-        const canEdit = isOwner ||
-            membership?.role === ProjectMemberRole.ADMIN ||
-            workspaceMembership?.role === WorkspaceMemberRole.ADMIN;
-
-        if (!canEdit) {
+        const access = await checkProjectAccess(video.project, session.user.id, { intent: 'manage' });
+        if (!access.canEdit) {
             return apiErrors.forbidden('Access denied');
         }
 

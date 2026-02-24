@@ -87,11 +87,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
 });
 
+type ProjectAccessIntent = 'view' | 'manage' | 'delete';
+
 // Helper to check project access including workspace membership
 export async function checkProjectAccess(
   project: { id: string; ownerId: string; workspaceId: string; visibility: string },
-  userId: string | undefined
+  userId: string | undefined,
+  options?: { intent?: ProjectAccessIntent }
 ) {
+  const intent = options?.intent ?? 'view';
   const isOwner = userId === project.ownerId;
   const isPublic = project.visibility === 'PUBLIC';
 
@@ -104,16 +108,23 @@ export async function checkProjectAccess(
   const isProjectMember = !!projectMember;
   const isProjectAdmin = projectMember?.role === ProjectMemberRole.ADMIN;
 
-  // Check workspace membership
-  let workspaceRole: string | null = null;
-  if (!isOwner && !isProjectMember && userId) {
-    const wsMember = await db.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId: project.workspaceId, userId } },
-    });
-    const wsOwner = await db.workspace.findUnique({
-      where: { id: project.workspaceId },
-      select: { ownerId: true },
-    });
+  const needsWorkspaceForAccess = !!userId && !isOwner && !isProjectMember && !isPublic;
+  const needsWorkspaceForActions = !!userId && !isOwner && intent !== 'view';
+  const shouldLoadWorkspaceRole = needsWorkspaceForAccess || needsWorkspaceForActions;
+
+  // Check workspace membership/role
+  let workspaceRole: WorkspaceMemberRole | 'OWNER' | null = null;
+  if (shouldLoadWorkspaceRole && userId) {
+    const [wsMember, wsOwner] = await Promise.all([
+      db.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: project.workspaceId, userId } },
+      }),
+      db.workspace.findUnique({
+        where: { id: project.workspaceId },
+        select: { ownerId: true },
+      }),
+    ]);
+
     if (wsOwner?.ownerId === userId) {
       workspaceRole = 'OWNER';
     } else if (wsMember) {

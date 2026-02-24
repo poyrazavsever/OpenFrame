@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { db } from '@/lib/db';
 import {
   buildCommentsCsv,
@@ -50,10 +50,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 ownerId: true,
                 workspaceId: true,
                 visibility: true,
-                members: {
-                  where: { userId: session.user.id },
-                  select: { id: true },
-                },
               },
             },
           },
@@ -66,30 +62,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const project = version.video.project;
-    const isOwner = session.user.id === project.ownerId;
-    const isMember = project.members.length > 0;
+    const access = await checkProjectAccess(project, session.user.id);
 
-    let isWorkspaceMember = false;
-    if (!isOwner && !isMember) {
-      const [workspaceMember, workspace] = await Promise.all([
-        db.workspaceMember.findUnique({
-          where: {
-            workspaceId_userId: {
-              workspaceId: project.workspaceId,
-              userId: session.user.id,
-            },
-          },
-          select: { id: true },
-        }),
-        db.workspace.findUnique({
-          where: { id: project.workspaceId },
-          select: { ownerId: true },
-        }),
-      ]);
-      isWorkspaceMember = !!workspaceMember || workspace?.ownerId === session.user.id;
-    }
-
-    if (!isOwner && !isMember && !isWorkspaceMember) {
+    if (!access.hasAccess) {
       return apiErrors.notFound('Version');
     }
 

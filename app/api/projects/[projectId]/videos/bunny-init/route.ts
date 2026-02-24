@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
-import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { rateLimit } from '@/lib/rate-limit';
 import crypto from 'crypto';
@@ -13,24 +12,13 @@ type RouteParams = { params: Promise<{ projectId: string }> };
 async function getProjectWithEditAccess(projectId: string, userId: string) {
     const project = await db.project.findUnique({
         where: { id: projectId },
-        include: {
-            members: { where: { userId } },
-            workspace: {
-                include: {
-                    members: { where: { userId } },
-                },
-            },
-        },
+        select: { id: true, name: true, ownerId: true, workspaceId: true, visibility: true },
     });
 
     if (!project) return null;
 
-    const isOwner = project.ownerId === userId;
-    const membership = project.members[0];
-    const workspaceMembership = project.workspace.members[0];
-    const canEdit = isOwner ||
-        membership?.role === ProjectMemberRole.ADMIN ||
-        workspaceMembership?.role === WorkspaceMemberRole.ADMIN;
+    const access = await checkProjectAccess(project, userId, { intent: 'manage' });
+    const canEdit = access.canEdit;
 
     if (!canEdit) return null;
 

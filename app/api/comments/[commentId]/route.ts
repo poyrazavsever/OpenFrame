@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { rateLimit } from '@/lib/rate-limit';
@@ -8,7 +8,6 @@ import { validateShareLinkAccess } from '@/lib/share-links';
 import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { getGuestIdentityFromRequest } from '@/lib/guest-identity';
-import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 
 type RouteParams = { params: Promise<{ commentId: string }> };
 
@@ -66,11 +65,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                     include: {
                         video: {
                             include: {
-                                project: {
-                                    include: {
-                                        members: { where: { userId: session?.user?.id || '' } },
-                                    },
-                                },
+                                project: true,
                             },
                         },
                     },
@@ -84,29 +79,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
         // Authorization check: verify user has access to the project
         const project = comment.version.video.project;
-        const isOwner = session?.user?.id === project.ownerId;
-        const isMember = project.members.length > 0;
-        const isPublic = project.visibility === 'PUBLIC';
+        const access = await checkProjectAccess(project, session?.user?.id);
 
-        // Check workspace membership for access
-        let isWorkspaceMember = false;
-        if (!isOwner && !isMember && !isPublic && session?.user?.id) {
-            const wsMember = await db.workspaceMember.findUnique({
-                where: {
-                    workspaceId_userId: {
-                        workspaceId: project.workspaceId,
-                        userId: session.user.id,
-                    },
-                },
-            });
-            const wsOwner = await db.workspace.findUnique({
-                where: { id: project.workspaceId },
-                select: { ownerId: true },
-            });
-            isWorkspaceMember = !!wsMember || wsOwner?.ownerId === session.user.id;
-        }
-
-        if (!isOwner && !isMember && !isPublic && !isWorkspaceMember) {
+        if (!access.hasAccess) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -139,9 +114,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
                     include: {
                         video: {
                             include: {
-                                project: {
-                                    include: { members: true },
-                                },
+                                project: true,
                             },
                         },
                     },
@@ -155,42 +128,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
         const project = comment.version.video.project;
         const userId = session?.user?.id ?? null;
+        const access = await checkProjectAccess(project, userId ?? undefined, { intent: 'manage' });
         const isOwner = userId === project.ownerId;
         const isAuthor = !!userId && comment.authorId === userId;
-        const projectMembership = userId
-            ? project.members.find((member) => member.userId === userId) ?? null
-            : null;
-        const isProjectAdmin = projectMembership?.role === ProjectMemberRole.ADMIN;
         const guestIdentityId = !userId ? getGuestIdentityFromRequest(request) : null;
         const isGuestAuthor = !userId
             && !comment.authorId
             && !!comment.guestIdentityId
             && guestIdentityId === comment.guestIdentityId;
         const canEditOwnContent = isAuthor || isGuestAuthor;
-
-        // Check workspace role for resolve permissions.
-        let workspaceRole: WorkspaceMemberRole | 'OWNER' | null = null;
-        if (!isOwner && userId) {
-            const wsMember = await db.workspaceMember.findUnique({
-                where: {
-                    workspaceId_userId: {
-                        workspaceId: project.workspaceId,
-                        userId,
-                    },
-                },
-            });
-            const wsOwner = await db.workspace.findUnique({
-                where: { id: project.workspaceId },
-                select: { ownerId: true },
-            });
-            if (wsOwner?.ownerId === userId) {
-                workspaceRole = 'OWNER';
-            } else if (wsMember) {
-                workspaceRole = wsMember.role;
-            }
-        }
-        const isWorkspaceAdmin = workspaceRole === 'OWNER' || workspaceRole === WorkspaceMemberRole.ADMIN;
-        const canResolveComment = isOwner || isProjectAdmin || isWorkspaceAdmin;
+        const canResolveComment = access.canEdit;
 
         if (!userId && !isGuestAuthor) {
             const shareSession = getShareSessionFromRequest(request, comment.version.video.id);
