@@ -182,99 +182,115 @@ export function VideoCard({ video, projectId, onDeleted }: VideoCardProps) {
 
   return (
     <>
-      <Card className="group overflow-hidden transition-colors hover:bg-accent/50 cursor-pointer">
-        <Link href={`/projects/${projectId}/videos/${video.id}`}>
-          {/* Thumbnail */}
-          <div className="relative aspect-video bg-muted overflow-hidden">
-            {imgError ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/80">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
-                <span className="text-xs text-muted-foreground font-medium">Processing...</span>
-              </div>
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={`${video.thumbnailUrl?.replace('vz-thumbnail.b-cdn.net', 'vz-965f4f4a-fc1.b-cdn.net')}${retryKey ? `?t=${retryKey}` : ''}`}
-                alt={video.title}
-                className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
-                onError={() => {
-                  setImgError(true);
-                  // Check again after 10 seconds in case Bunny is still processing
-                  setTimeout(() => {
-                    setRetryKey(Date.now());
-                    setImgError(false);
-                  }, 10000);
-                }}
-              />
-            )}
-            {!imgError && (
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <Play className="h-12 w-12 text-white" fill="white" />
-              </div>
-            )}
-            <Badge className="absolute bottom-2 right-2 bg-black/70">{video.duration}</Badge>
-          </div>
-        </Link>
+      <div className="relative">
+        <Card
+          className={`group overflow-hidden transition-colors hover:bg-accent/50 cursor-pointer ${
+            isDeleting ? 'pointer-events-none opacity-70' : ''
+          }`}
+        >
+          <Link href={`/projects/${projectId}/videos/${video.id}`}>
+            {/* Thumbnail */}
+            <div className="relative aspect-video bg-muted overflow-hidden">
+              {imgError ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/80">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
+                  <span className="text-xs text-muted-foreground font-medium">Processing...</span>
+                </div>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`${video.thumbnailUrl?.replace('vz-thumbnail.b-cdn.net', 'vz-965f4f4a-fc1.b-cdn.net')}${retryKey ? `?t=${retryKey}` : ''}`}
+                  alt={video.title}
+                  className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
+                  onError={() => {
+                    setImgError(true);
+                    // Check again after 10 seconds in case Bunny is still processing
+                    setTimeout(() => {
+                      setRetryKey(Date.now());
+                      setImgError(false);
+                    }, 10000);
+                  }}
+                />
+              )}
+              {!imgError && (
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <Play className="h-12 w-12 text-white" fill="white" />
+                </div>
+              )}
+              <Badge className="absolute bottom-2 right-2 bg-black/70">{video.duration}</Badge>
+            </div>
+          </Link>
 
-        <CardContent className="p-4">
-          <div className="flex items-start justify-between gap-2">
-            <Link href={`/projects/${projectId}/videos/${video.id}`} className="min-w-0 flex-1">
-              <h3 className="font-medium truncate">{video.title}</h3>
-              <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Badge variant="secondary" className="text-xs">
-                    v{video.currentVersion}
-                  </Badge>
-                </span>
-                <span className="flex items-center gap-1">
-                  <MessageSquare className="h-3.5 w-3.5" />
-                  {video.commentCount}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5" />
-                  {video.lastUpdated}
-                </span>
-              </div>
-            </Link>
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-2">
+              <Link href={`/projects/${projectId}/videos/${video.id}`} className="min-w-0 flex-1">
+                <h3 className="font-medium truncate">{video.title}</h3>
+                <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <Badge variant="secondary" className="text-xs">
+                      v{video.currentVersion}
+                    </Badge>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {video.commentCount}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3.5 w-3.5" />
+                    {video.lastUpdated}
+                  </span>
+                </div>
+              </Link>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <Link href={`/projects/${projectId}/videos/${video.id}/share`}>
-                    <Share2 className="mr-2 h-4 w-4" />
-                    Share
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setShowEditDialog(true)}>
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Edit
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setShowVersionDialog(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Version
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-destructive"
-                  onSelect={() => setShowDeleteDialog(true)}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={isDeleting}
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link href={`/projects/${projectId}/videos/${video.id}/share`}>
+                      <Share2 className="mr-2 h-4 w-4" />
+                      Share
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setShowEditDialog(true)}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setShowVersionDialog(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Version
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive"
+                    onSelect={() => setShowDeleteDialog(true)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </CardContent>
+        </Card>
+
+        {isDeleting && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/60 backdrop-blur-[1px]">
+            <div className="flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-sm font-medium shadow-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Deleting...
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        )}
+      </div>
 
       {/* Edit Dialog */}
       <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
