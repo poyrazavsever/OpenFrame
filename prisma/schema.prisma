@@ -32,8 +32,28 @@ model User {
   projectMemberships ProjectMember[]
   notificationSetting NotificationSetting?
   watchProgress      WatchProgress[]
+  feedbackEntries    UserFeedback[]
   
   @@map("users")
+}
+
+enum FeedbackEntryType {
+  FEEDBACK
+  REVIEW
+}
+
+enum FeedbackCategory {
+  BUG
+  FEATURE
+  OTHER
+}
+
+enum FeedbackStatus {
+  NEW
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  RESOLVED
 }
 
 enum DownloadEgressSource {
@@ -390,6 +410,41 @@ model ShareLink {
   @@index([token])
   @@index([token, expiresAt])
   @@map("share_links")
+}
+
+model UserFeedback {
+  id             String            @id @default(cuid())
+  userId         String
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           FeedbackEntryType
+  category       FeedbackCategory?
+  title          String
+  message        String            @db.Text
+  screenshotUrl  String?
+  screenshots    UserFeedbackScreenshot[]
+  rating         Int?
+  status         FeedbackStatus    @default(NEW)
+  allowShowcase  Boolean           @default(false)
+  showOnLanding  Boolean           @default(false)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([type, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([showOnLanding, createdAt(sort: Desc)])
+  @@map("user_feedback")
+}
+
+model UserFeedbackScreenshot {
+  id           String       @id @default(cuid())
+  feedbackId   String
+  feedback     UserFeedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  url          String
+  createdAt    DateTime     @default(now())
+
+  @@index([feedbackId, createdAt(sort: Desc)])
+  @@map("user_feedback_screenshots")
 }
 
 enum SharePermission {

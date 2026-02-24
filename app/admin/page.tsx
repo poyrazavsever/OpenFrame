@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { getCachedBunnyStorageStats, getCachedTotalStorage } from '@/lib/admin-stats';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, Folder, Video, MessageSquare, Mic, HardDrive, Image as ImageIcon, Film } from 'lucide-react';
+import { Users, Folder, Video, MessageSquare, Mic, HardDrive, Image as ImageIcon, Film, MessageSquareQuote, Star } from 'lucide-react';
 
 export const metadata: Metadata = {
     title: 'Admin Dashboard | OpenFrame',
@@ -27,6 +27,10 @@ export default async function AdminDashboardPage() {
         redirect('/');
     }
 
+    const userFeedbackDelegate = (db as unknown as {
+        userFeedback?: { count: (args?: unknown) => Promise<number> };
+    }).userFeedback;
+
     // 1. Database Stats
     const [
         totalUsers,
@@ -47,6 +51,23 @@ export default async function AdminDashboardPage() {
             where: { imageUrl: { not: null } },
         }),
     ]);
+
+    let totalFeedback = 0;
+    let totalReviews = 0;
+    if (userFeedbackDelegate) {
+        try {
+            [totalFeedback, totalReviews] = await Promise.all([
+                userFeedbackDelegate.count({
+                    where: { type: 'FEEDBACK' },
+                }),
+                userFeedbackDelegate.count({
+                    where: { type: 'REVIEW' },
+                }),
+            ]);
+        } catch (error) {
+            console.error('Failed to fetch feedback stats:', error);
+        }
+    }
 
     // 2. Storage Stats (Cached)
     const [totalStorageBytes, bunnyStorageStats] = await Promise.all([
@@ -115,6 +136,24 @@ export default async function AdminDashboardPage() {
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">{totalImageComments}</div>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Feedback Submissions</CardTitle>
+                        <MessageSquareQuote className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{totalFeedback}</div>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Review Submissions</CardTitle>
+                        <Star className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{totalReviews}</div>
                     </CardContent>
                 </Card>
                 <Card>

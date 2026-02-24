@@ -13,13 +13,12 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
     png: 'image/png',
     webp: 'image/webp',
     gif: 'image/gif',
-    svg: 'image/svg+xml',
 };
 const UNATTACHED_UPLOAD_TTL_MS = 15 * 60 * 1000;
 
 function getContentType(filename: string): string {
     const ext = filename.split('.').pop()?.toLowerCase() || '';
-    return CONTENT_TYPE_MAP[ext] || 'image/jpeg';
+    return CONTENT_TYPE_MAP[ext] || 'application/octet-stream';
 }
 
 export async function GET(
@@ -47,11 +46,28 @@ export async function GET(
 
         const lastModified = headResponse.LastModified;
         if (lastModified && Date.now() - lastModified.getTime() > UNATTACHED_UPLOAD_TTL_MS) {
-            const referenced = await db.comment.findFirst({
-                where: { imageUrl: mediaUrl },
-                select: { id: true },
-            });
-            if (!referenced) {
+            const userFeedbackScreenshotDelegate = (db as unknown as {
+                userFeedbackScreenshot?: {
+                    findFirst: (args?: unknown) => Promise<{ id: string } | null>;
+                };
+            }).userFeedbackScreenshot;
+            const [commentReferenced, feedbackReferenced, feedbackAttachmentReferenced] = await Promise.all([
+                db.comment.findFirst({
+                    where: { imageUrl: mediaUrl },
+                    select: { id: true },
+                }),
+                db.userFeedback.findFirst({
+                    where: { screenshotUrl: mediaUrl },
+                    select: { id: true },
+                }),
+                userFeedbackScreenshotDelegate
+                    ? userFeedbackScreenshotDelegate.findFirst({
+                        where: { url: mediaUrl },
+                        select: { id: true },
+                    })
+                    : Promise.resolve(null),
+            ]);
+            if (!commentReferenced && !feedbackReferenced && !feedbackAttachmentReferenced) {
                 await r2Client.send(
                     new DeleteObjectCommand({
                         Bucket: R2_BUCKET_NAME,
@@ -62,7 +78,7 @@ export async function GET(
             }
         }
 
-        const contentType = headResponse.ContentType || getContentType(filename);
+        const contentType = getContentType(filename);
 
         const objectResponse = await r2Client.send(
             new GetObjectCommand({
@@ -94,6 +110,8 @@ export async function GET(
                 'Content-Type': contentType,
                 'Cache-Control': 'private, no-store',
                 'Accept-Ranges': 'bytes',
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "default-src 'none'; sandbox",
             },
         });
     } catch (error: unknown) {

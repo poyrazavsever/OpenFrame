@@ -14,7 +14,8 @@ import {
   User,
   Menu,
   Keyboard,
-  LayoutDashboard
+  LayoutDashboard,
+  MessageSquareQuote,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -151,7 +152,21 @@ export function Header({ user }: HeaderProps) {
 
         {/* Right side */}
         <div className="flex items-center gap-2 ml-auto">
-
+          {user && (
+            <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
+              <Link href="/feedback">
+                <MessageSquareQuote className="h-4 w-4 mr-1.5" />
+                Feedback
+              </Link>
+            </Button>
+          )}
+          {user && (
+            <Button asChild variant="ghost" size="icon" className="sm:hidden" aria-label="Feedback and reviews">
+              <Link href="/feedback">
+                <MessageSquareQuote className="h-4 w-4" />
+              </Link>
+            </Button>
+          )}
 
           <ThemeToggle />
 

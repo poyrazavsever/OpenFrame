@@ -9,28 +9,33 @@ import { validateShareLinkAccess } from '@/lib/share-links';
 import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import {
+    detectImageMime,
+    getImageExtension,
+    isAllowedImageType,
+    normalizeImageMime,
+} from '@/lib/image-upload-validation';
+import {
     deriveGuestUploadContext,
     enforceGuestUploadQuota,
     verifyGuestUploadToken,
 } from '@/lib/guest-upload-token';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_TYPES = [
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'image/gif',
-];
+const MAX_MULTIPART_BODY_SIZE = MAX_FILE_SIZE + (512 * 1024); // file + multipart overhead
 
 export async function POST(request: NextRequest) {
     try {
         // Check Content-Length header BEFORE loading the file
         const contentLength = request.headers.get('content-length');
-        if (contentLength) {
-            const fileSize = parseInt(contentLength, 10);
-            if (isNaN(fileSize) || fileSize > MAX_FILE_SIZE) {
-                return apiErrors.badRequest('File too large. Maximum size is 10MB.');
-            }
+        if (!contentLength) {
+            return apiErrors.badRequest('Missing Content-Length header');
+        }
+        const bodySize = parseInt(contentLength, 10);
+        if (isNaN(bodySize) || bodySize <= 0) {
+            return apiErrors.badRequest('Invalid Content-Length header');
+        }
+        if (bodySize > MAX_MULTIPART_BODY_SIZE) {
+            return apiErrors.badRequest('File too large. Maximum size is 10MB.');
         }
 
         // Rate limit
@@ -40,11 +45,15 @@ export async function POST(request: NextRequest) {
         const session = await auth();
 
         const formData = await request.formData();
-        const file = formData.get('image') as File | null;
+        const files = formData.getAll('image');
+        if (files.length !== 1) {
+            return apiErrors.badRequest('No image file provided');
+        }
+        const file = files[0];
         const videoId = formData.get('videoId');
         const uploadToken = formData.get('uploadToken');
 
-        if (!file) {
+        if (!(file instanceof File)) {
             return apiErrors.badRequest('No image file provided');
         }
         if (typeof videoId !== 'string' || !videoId.trim()) {
@@ -107,19 +116,23 @@ export async function POST(request: NextRequest) {
         }
 
         // Check content type
-        const contentType = file.type;
-        if (!ALLOWED_TYPES.includes(contentType)) {
-            return apiErrors.badRequest(`Unsupported image format: ${contentType}`);
+        const normalizedMime = normalizeImageMime(file.type);
+        if (normalizedMime && !isAllowedImageType(normalizedMime)) {
+            return apiErrors.badRequest(`Unsupported image format: ${file.type}`);
         }
-
-        // Generate unique filename
-        const ext = contentType.split('/')[1] || 'jpeg';
-        const filename = `${randomUUID()}.${ext}`;
-        const key = `images/${filename}`;
 
         // Convert to buffer
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
+        const detectedMime = detectImageMime(buffer);
+        if (!detectedMime) {
+            return apiErrors.badRequest('Uploaded file content does not match an allowed image type');
+        }
+
+        // Generate unique filename
+        const ext = getImageExtension(detectedMime);
+        const filename = `${randomUUID()}.${ext}`;
+        const key = `images/${filename}`;
 
         // Upload to R2
         await r2Client.send(
@@ -127,7 +140,7 @@ export async function POST(request: NextRequest) {
                 Bucket: R2_BUCKET_NAME,
                 Key: key,
                 Body: buffer,
-                ContentType: contentType,
+                ContentType: detectedMime,
             })
         );
 
