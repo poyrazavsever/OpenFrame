@@ -304,7 +304,6 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const voiceRafRef = useRef<number | null>(null);
   const voiceKnownDurationRef = useRef<number>(0);
-  const [selectedTimestamp, setSelectedTimestamp] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
@@ -1725,7 +1724,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     const optimisticComment: Comment = {
       id: tempId,
       content: (voiceData || imageBlob) ? commentText.trim() || null : commentText,
-      timestamp: selectedTimestamp ?? currentTime,
+      timestamp: currentTime,
       voiceUrl: voiceData?.url ?? null,
       voiceDuration: voiceData?.duration ?? null,
       imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null,
@@ -1753,7 +1752,6 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     });
 
     setCommentText('');
-    setSelectedTimestamp(null);
     setSelectedTagId(availableTags.length > 0 ? availableTags[0].id : null);
     setAudioBlob(null);
     setImageBlob(null);
@@ -1790,7 +1788,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: (voiceData || imageBlob) ? commentText.trim() || null : commentText,
-          timestamp: selectedTimestamp ?? currentTime,
+          timestamp: currentTime,
           ...(voiceData && { voiceUrl: voiceData.url, voiceDuration: voiceData.duration }),
           ...(imageData && { imageUrl: imageData.url }),
           ...(isGuest && normalizedGuestName && { guestName: normalizedGuestName }),
@@ -1845,7 +1843,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       setIsUploadingImage(false);
       isMutatingRef.current = false;
     }
-  }, [commentText, currentTime, selectedTimestamp, activeVersion, activeVersionId, isGuest, normalizedGuestName, currentUserName, selectedTagId, availableTags, imageBlob, annotationStrokes, isAnnotating, videoId, getGuestUploadToken]);
+  }, [commentText, currentTime, activeVersion, activeVersionId, isGuest, normalizedGuestName, currentUserName, selectedTagId, availableTags, imageBlob, annotationStrokes, isAnnotating, videoId, getGuestUploadToken]);
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>, isReply: boolean = false) => {
     const file = e.target.files?.[0];
@@ -4324,27 +4322,6 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           </div>
 
           <div className="shrink-0 p-4 border-t bg-background">
-            <div className="flex items-center gap-2 mb-2">
-              <Button
-                variant={selectedTimestamp !== null ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  if (selectedTimestamp !== null) {
-                    setSelectedTimestamp(null);
-                  } else {
-                    setSelectedTimestamp(currentTime);
-                  }
-                }}
-              >
-                <Clock className="h-4 w-4 mr-1" />
-                {selectedTimestamp !== null ? formatTime(selectedTimestamp) : formatTime(currentTime)}
-                {selectedTimestamp !== null && <X className="h-3 w-3 ml-1" />}
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                {selectedTimestamp !== null ? 'Pinned — click to unpin' : 'Pin to this time'}
-              </span>
-            </div>
-
             {isRecording ? (
               <div className="flex items-center gap-3 p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
                 <div className="h-3 w-3 rounded-full bg-destructive animate-pulse" />
