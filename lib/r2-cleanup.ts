@@ -1,11 +1,13 @@
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { db } from '@/lib/db';
+import { runWithConcurrency } from '@/lib/async-pool';
 
 /** The path prefix for images served by the upload API. */
 const IMAGE_PATH_PREFIX = '/api/upload/image/';
 /** The path prefix for audio URLs served by the upload API. */
 const AUDIO_PATH_PREFIX = '/api/upload/audio/';
+const CLEANUP_DELETE_CONCURRENCY = 5;
 
 /**
  * Extract the R2 object key from a media URL.
@@ -26,18 +28,17 @@ function mediaUrlToKey(url: string): string | null {
  * Delete a list of media files from R2 (best-effort, logs failures).
  */
 async function deleteMediaFiles(mediaUrls: string[]) {
-    for (const url of mediaUrls) {
+    const mediaKeys = [...new Set(mediaUrls.map(mediaUrlToKey).filter((key): key is string => Boolean(key)))];
+
+    await runWithConcurrency(mediaKeys, CLEANUP_DELETE_CONCURRENCY, async (key) => {
         try {
-            const key = mediaUrlToKey(url);
-            if (key) {
-                await r2Client.send(
-                    new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key })
-                );
-            }
+            await r2Client.send(
+                new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key })
+            );
         } catch (err) {
-            console.error('Failed to delete media from R2:', err);
+            console.error(`Failed to delete media from R2 (key: ${key}):`, err);
         }
-    }
+    });
 }
 
 /**

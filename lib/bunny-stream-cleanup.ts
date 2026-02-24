@@ -1,3 +1,5 @@
+import { runWithConcurrency } from '@/lib/async-pool';
+
 interface BunnyVideoRef {
   providerId: string;
   videoId: string;
@@ -5,6 +7,7 @@ interface BunnyVideoRef {
 
 const BUNNY_API_BASE = 'https://video.bunnycdn.com';
 const BUNNY_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+const BUNNY_DELETE_CONCURRENCY = 5;
 
 function getBunnyConfig(): { apiKey: string; libraryId: string } {
   const apiKey = process.env.BUNNY_STREAM_API_KEY;
@@ -33,8 +36,9 @@ export async function cleanupBunnyStreamVideos(videoRefs: BunnyVideoRef[]): Prom
   if (bunnyVideoIds.length === 0) return;
 
   const { apiKey, libraryId } = getBunnyConfig();
+  const failures: Array<{ videoId: string; status: number; bodySnippet: string }> = [];
 
-  for (const bunnyVideoId of bunnyVideoIds) {
+  await runWithConcurrency(bunnyVideoIds, BUNNY_DELETE_CONCURRENCY, async (bunnyVideoId) => {
     const response = await fetch(`${BUNNY_API_BASE}/library/${libraryId}/videos/${encodeURIComponent(bunnyVideoId)}`, {
       method: 'DELETE',
       headers: {
@@ -43,13 +47,23 @@ export async function cleanupBunnyStreamVideos(videoRefs: BunnyVideoRef[]): Prom
     });
 
     // Treat not-found as already deleted.
-    if (response.status === 404) continue;
+    if (response.status === 404) return;
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new Error(
-        `Bunny cleanup failed for video ${bunnyVideoId}: ${response.status} ${body.slice(0, 300)}`
-      );
+      failures.push({
+        videoId: bunnyVideoId,
+        status: response.status,
+        bodySnippet: body.slice(0, 300),
+      });
     }
+  });
+
+  if (failures.length > 0) {
+    const preview = failures
+      .slice(0, 3)
+      .map((failure) => `${failure.videoId} (${failure.status})`)
+      .join(', ');
+    throw new Error(`Bunny cleanup failed for ${failures.length} video(s): ${preview}`);
   }
 }

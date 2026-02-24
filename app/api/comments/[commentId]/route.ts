@@ -8,6 +8,9 @@ import { validateShareLinkAccess } from '@/lib/share-links';
 import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { getGuestIdentityFromRequest } from '@/lib/guest-identity';
+import { runWithConcurrency } from '@/lib/async-pool';
+
+const CLEANUP_DELETE_CONCURRENCY = 5;
 
 type RouteParams = { params: Promise<{ commentId: string }> };
 
@@ -298,30 +301,31 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         // Clean up media files from R2 (best-effort, don't block on failure)
         const AUDIO_PREFIX = '/api/upload/audio/';
         const IMAGE_PREFIX = '/api/upload/image/';
-        for (const url of mediaUrls) {
-            try {
-                // Extract filename using string parsing (safe against ReDoS)
-                let key: string | null = null;
-                if (url.includes(AUDIO_PREFIX)) {
-                    const filename = url.slice(url.indexOf(AUDIO_PREFIX) + AUDIO_PREFIX.length);
-                    if (filename) key = `voice/${filename}`;
-                } else if (url.includes(IMAGE_PREFIX)) {
-                    const filename = url.slice(url.indexOf(IMAGE_PREFIX) + IMAGE_PREFIX.length);
-                    if (filename) key = `images/${filename}`;
-                }
-
-                if (key) {
-                    await r2Client.send(
-                        new DeleteObjectCommand({
-                            Bucket: R2_BUCKET_NAME,
-                            Key: key,
-                        })
-                    );
-                }
-            } catch (err) {
-                console.error('Failed to delete audio from R2:', err);
+        const mediaKeys = [...new Set(mediaUrls.map((url) => {
+            // Extract filename using string parsing (safe against ReDoS)
+            if (url.includes(AUDIO_PREFIX)) {
+                const filename = url.slice(url.indexOf(AUDIO_PREFIX) + AUDIO_PREFIX.length);
+                return filename ? `voice/${filename}` : null;
             }
-        }
+            if (url.includes(IMAGE_PREFIX)) {
+                const filename = url.slice(url.indexOf(IMAGE_PREFIX) + IMAGE_PREFIX.length);
+                return filename ? `images/${filename}` : null;
+            }
+            return null;
+        }).filter((key): key is string => Boolean(key)))];
+
+        await runWithConcurrency(mediaKeys, CLEANUP_DELETE_CONCURRENCY, async (key) => {
+            try {
+                await r2Client.send(
+                    new DeleteObjectCommand({
+                        Bucket: R2_BUCKET_NAME,
+                        Key: key,
+                    })
+                );
+            } catch (err) {
+                console.error(`Failed to delete media from R2 (key: ${key}):`, err);
+            }
+        });
 
         const response = successResponse({ message: 'Comment deleted' });
         return withCacheControl(response, 'private, no-store');
