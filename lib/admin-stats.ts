@@ -6,6 +6,17 @@ import { ListObjectsV2Command, type ListObjectsV2CommandInput } from '@aws-sdk/c
 const BUNNY_API_BASE = 'https://video.bunnycdn.com';
 const STORAGE_CACHE_SECONDS = 600;
 
+interface R2StorageSnapshot {
+    fileSizes: Map<string, number>;
+    totalBytes: number;
+    refreshedAt: string;
+}
+
+const globalForAdminStats = globalThis as unknown as {
+    adminR2StorageSnapshot?: R2StorageSnapshot;
+    adminR2StorageSnapshotPromise?: Promise<R2StorageSnapshot>;
+};
+
 interface BunnyStorageStats {
     totalBytes: number;
     byVideoId: Record<string, number>;
@@ -75,6 +86,46 @@ async function listAllR2FileSizes(): Promise<Map<string, number>> {
     return fileSizes;
 }
 
+async function buildR2StorageSnapshot(): Promise<R2StorageSnapshot> {
+    const fileSizes = await listAllR2FileSizes();
+    let totalBytes = 0;
+    for (const size of fileSizes.values()) {
+        totalBytes += size;
+    }
+
+    return {
+        fileSizes,
+        totalBytes,
+        refreshedAt: new Date().toISOString(),
+    };
+}
+
+async function getR2StorageSnapshot(): Promise<R2StorageSnapshot> {
+    if (globalForAdminStats.adminR2StorageSnapshot) {
+        return globalForAdminStats.adminR2StorageSnapshot;
+    }
+
+    if (!globalForAdminStats.adminR2StorageSnapshotPromise) {
+        globalForAdminStats.adminR2StorageSnapshotPromise = buildR2StorageSnapshot()
+            .then((snapshot) => {
+                globalForAdminStats.adminR2StorageSnapshot = snapshot;
+                return snapshot;
+            })
+            .finally(() => {
+                globalForAdminStats.adminR2StorageSnapshotPromise = undefined;
+            });
+    }
+
+    return globalForAdminStats.adminR2StorageSnapshotPromise;
+}
+
+export async function refreshR2StorageSnapshot(): Promise<string> {
+    const snapshot = await buildR2StorageSnapshot();
+    globalForAdminStats.adminR2StorageSnapshot = snapshot;
+    globalForAdminStats.adminR2StorageSnapshotPromise = undefined;
+    return snapshot.refreshedAt;
+}
+
 async function fetchBunnyStorageStats(): Promise<BunnyStorageStats> {
     const { apiKey, libraryId } = getBunnyConfig();
     const byVideoId: Record<string, number> = {};
@@ -124,24 +175,15 @@ async function fetchBunnyStorageStats(): Promise<BunnyStorageStats> {
     return { totalBytes, byVideoId };
 }
 
-// Cache for 10 minutes (600 seconds)
-export const getCachedTotalStorage = unstable_cache(
-    async () => {
-        let totalStorageBytes = 0;
-        try {
-            const fileSizes = await listAllR2FileSizes();
-            for (const size of fileSizes.values()) {
-                totalStorageBytes += size;
-            }
-        } catch (err) {
-            console.error('Failed to fetch total storage stats:', err);
-            return -1;
-        }
-        return totalStorageBytes;
-    },
-    ['admin-total-storage'],
-    { revalidate: STORAGE_CACHE_SECONDS }
-);
+export async function getCachedTotalStorage(): Promise<number> {
+    try {
+        const snapshot = await getR2StorageSnapshot();
+        return snapshot.totalBytes;
+    } catch (err) {
+        console.error('Failed to fetch total storage stats:', err);
+        return -1;
+    }
+}
 
 export const getCachedBunnyStorageStats = unstable_cache(
     async () => {
@@ -196,28 +238,26 @@ export const getCachedUserBunnyStorage = unstable_cache(
     { revalidate: STORAGE_CACHE_SECONDS }
 );
 
-export const getCachedUserMediaStorage = unstable_cache(
-    async () => {
-        // Return a plain object so it maps cleanly out of unstable_cache across requests
-        const userStorage: Record<string, { total: number, voice: number, image: number }> = {};
-        try {
-            const fileSizes = await listAllR2FileSizes();
-            const seenKeys = new Set<string>();
+export async function getCachedUserMediaStorage(): Promise<Record<string, { total: number, voice: number, image: number }>> {
+    // Return a plain object so it maps cleanly out of server component boundaries
+    const userStorage: Record<string, { total: number, voice: number, image: number }> = {};
+    try {
+        const snapshot = await getR2StorageSnapshot();
+        const seenKeys = new Set<string>();
 
-            const mediaComments = await db.comment.findMany({
-                where: { OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }] },
-                select: {
-                    voiceUrl: true,
-                    imageUrl: true,
-                    version: {
-                        select: {
-                            video: {
-                                select: {
-                                    project: {
-                                        select: {
-                                            workspace: {
-                                                select: { ownerId: true },
-                                            },
+        const mediaComments = await db.comment.findMany({
+            where: { OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }] },
+            select: {
+                voiceUrl: true,
+                imageUrl: true,
+                version: {
+                    select: {
+                        video: {
+                            select: {
+                                project: {
+                                    select: {
+                                        workspace: {
+                                            select: { ownerId: true },
                                         },
                                     },
                                 },
@@ -225,50 +265,48 @@ export const getCachedUserMediaStorage = unstable_cache(
                         },
                     },
                 },
-            });
+            },
+        });
 
-            for (const comment of mediaComments) {
-                const billedUserId = comment.version.video.project.workspace.ownerId;
-                if (!billedUserId) continue;
+        for (const comment of mediaComments) {
+            const billedUserId = comment.version.video.project.workspace.ownerId;
+            if (!billedUserId) continue;
 
-                if (!userStorage[billedUserId]) {
-                    userStorage[billedUserId] = { total: 0, voice: 0, image: 0 };
-                }
+            if (!userStorage[billedUserId]) {
+                userStorage[billedUserId] = { total: 0, voice: 0, image: 0 };
+            }
 
-                if (comment.voiceUrl) {
-                    const keyParts = comment.voiceUrl.split('/');
-                    const filename = keyParts[keyParts.length - 1];
-                    const r2Key = `voice/${filename}`;
-                    const dedupeKey = `${billedUserId}:${r2Key}`;
-                    if (!seenKeys.has(dedupeKey)) {
-                        seenKeys.add(dedupeKey);
-                        const size = fileSizes.get(r2Key) || 0;
-                        userStorage[billedUserId].voice += size;
-                        userStorage[billedUserId].total += size;
-                    }
-                }
-
-                if (comment.imageUrl) {
-                    const keyParts = comment.imageUrl.split('/');
-                    const filename = keyParts[keyParts.length - 1];
-                    const r2Key = `images/${filename}`;
-                    const dedupeKey = `${billedUserId}:${r2Key}`;
-                    if (!seenKeys.has(dedupeKey)) {
-                        seenKeys.add(dedupeKey);
-                        const size = fileSizes.get(r2Key) || 0;
-                        userStorage[billedUserId].image += size;
-                        userStorage[billedUserId].total += size;
-                    }
+            if (comment.voiceUrl) {
+                const keyParts = comment.voiceUrl.split('/');
+                const filename = keyParts[keyParts.length - 1];
+                const r2Key = `voice/${filename}`;
+                const dedupeKey = `${billedUserId}:${r2Key}`;
+                if (!seenKeys.has(dedupeKey)) {
+                    seenKeys.add(dedupeKey);
+                    const size = snapshot.fileSizes.get(r2Key) || 0;
+                    userStorage[billedUserId].voice += size;
+                    userStorage[billedUserId].total += size;
                 }
             }
-        } catch (err) {
-            console.error('Failed to parse user storage:', err);
+
+            if (comment.imageUrl) {
+                const keyParts = comment.imageUrl.split('/');
+                const filename = keyParts[keyParts.length - 1];
+                const r2Key = `images/${filename}`;
+                const dedupeKey = `${billedUserId}:${r2Key}`;
+                if (!seenKeys.has(dedupeKey)) {
+                    seenKeys.add(dedupeKey);
+                    const size = snapshot.fileSizes.get(r2Key) || 0;
+                    userStorage[billedUserId].image += size;
+                    userStorage[billedUserId].total += size;
+                }
+            }
         }
-        return userStorage;
-    },
-    ['admin-user-media-storage'],
-    { revalidate: STORAGE_CACHE_SECONDS }
-);
+    } catch (err) {
+        console.error('Failed to parse user storage:', err);
+    }
+    return userStorage;
+}
 
 export const getCachedUserDownloadEgress = unstable_cache(
     async () => {

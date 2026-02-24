@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { getCachedBunnyStorageStats, getCachedTotalStorage } from '@/lib/admin-stats';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RefreshR2StatsButton } from '@/components/admin/refresh-r2-stats-button';
 import { Users, Folder, Video, MessageSquare, Mic, HardDrive, Image as ImageIcon, Film, MessageSquareQuote, Star } from 'lucide-react';
 
 export const metadata: Metadata = {
@@ -79,6 +80,7 @@ export default async function AdminDashboardPage() {
         <div className="flex-1 space-y-4 px-4 md:px-8">
             <div className="flex items-center justify-between space-y-2">
                 <h2 className="text-3xl font-bold tracking-tight">Dashboard Overview</h2>
+                <RefreshR2StatsButton />
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <Card>
