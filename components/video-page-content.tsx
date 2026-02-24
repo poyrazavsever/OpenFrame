@@ -313,6 +313,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   // Watch progress state
   const [savedProgress, setSavedProgress] = useState<number | null>(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const videoDurationRef = useRef(0);
   const progressSaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressWriteInFlightRef = useRef(false);
@@ -845,7 +846,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     const progress = Math.max(0, input.progress);
     if (progress <= 0) return;
 
-    const duration = Math.max(0, input.duration ?? videoDuration ?? 0);
+    const duration = Math.max(0, input.duration ?? videoDurationRef.current ?? 0);
     const force = input.force ?? false;
 
     if (!force && Math.abs(progress - lastSavedProgressRef.current) < 2) {
@@ -878,7 +879,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       progressDebounceTimerRef.current = null;
       void flushScheduledWatchProgress();
     }, 800);
-  }, [video?.isAuthenticated, activeVersionId, videoDuration, flushScheduledWatchProgress]);
+  }, [video?.isAuthenticated, activeVersionId, flushScheduledWatchProgress]);
 
   useEffect(() => {
     return () => {
@@ -888,6 +889,10 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       }
     };
   }, []);
+
+  useEffect(() => {
+    videoDurationRef.current = videoDuration;
+  }, [videoDuration]);
 
   useEffect(() => {
     lastSavedProgressRef.current = 0;

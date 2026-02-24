@@ -45,5 +45,5 @@ next-env.d.ts
 
 # Progress (Internal Tracking)
 PROGRESS.md
-OPTIMIZATION.md
+OPTIMIZATIONS.md
 .kilocode
