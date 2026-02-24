@@ -348,6 +348,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [, setDeletingCommentId] = useState<string | null>(null);
   const isMutatingRef = useRef(false);
+  const commentsEtagRef = useRef<Map<string, string>>(new Map());
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Annotation state
@@ -515,8 +516,47 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const canResolveComments = !!video?.canResolveComments;
 
   const apiBasePath = mode === 'dashboard'
-    ? `/api/projects/${propProjectId}/videos/${videoId}`
-    : `/api/watch/${videoId}?includeComments=true`;
+    ? `/api/projects/${propProjectId}/videos/${videoId}?includeComments=false`
+    : `/api/watch/${videoId}`;
+
+  const fetchVersionComments = useCallback(async (versionId: string, useEtag: boolean) => {
+    const headers: HeadersInit = {};
+    if (useEtag) {
+      const etag = commentsEtagRef.current.get(versionId);
+      if (etag) headers['If-None-Match'] = etag;
+    }
+
+    const res = await fetch(`/api/versions/${versionId}/comments?includeResolved=true`, {
+      cache: 'no-store',
+      headers,
+    });
+
+    if (res.status === 304) return;
+    if (!res.ok) return;
+
+    const etag = res.headers.get('etag');
+    if (etag) commentsEtagRef.current.set(versionId, etag);
+
+    const payload = await res.json();
+    const commentsList = payload?.data?.comments;
+    if (!Array.isArray(commentsList)) return;
+
+    setVideo((prev) => {
+      if (!prev) return prev;
+      const totalComments = commentsList.reduce((sum: number, comment: Comment) => {
+        return sum + 1 + (comment.replies?.length ?? 0);
+      }, 0);
+
+      return {
+        ...prev,
+        versions: prev.versions.map((version) => (
+          version.id === versionId
+            ? { ...version, comments: commentsList, _count: { comments: totalComments } }
+            : version
+        )),
+      };
+    });
+  }, []);
 
   useEffect(() => {
     async function fetchVideo() {
@@ -532,9 +572,19 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           return;
         }
         const response = await res.json();
-        const data = response.data;
-        setVideo(data);
-        const active = data.versions?.find((v: Version) => v.isActive) || data.versions?.[0];
+        const rawData = response.data as Omit<VideoData, 'versions'> & {
+          versions?: Array<Version & { comments?: Comment[] }>;
+        };
+        const normalizedData: VideoData = {
+          ...rawData,
+          versions: (rawData.versions || []).map((version) => ({
+            ...version,
+            comments: Array.isArray(version.comments) ? version.comments : [],
+          })),
+        };
+
+        setVideo(normalizedData);
+        const active = normalizedData.versions?.find((v) => v.isActive) || normalizedData.versions?.[0];
         if (active) setActiveVersionId(active.id);
       } catch (err) {
         console.error('Error fetching video:', err);
@@ -545,6 +595,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     }
     fetchVideo();
   }, [apiBasePath, mode]);
+
+  useEffect(() => {
+    if (!activeVersionId) return;
+    void fetchVersionComments(activeVersionId, true);
+  }, [activeVersionId, fetchVersionComments]);
 
   // Memoize active version lookup to avoid recalculating on every render
   const activeVersion = useMemo(() => {
@@ -2421,7 +2476,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
 
   // Comment polling with Page Visibility API to pause when tab is hidden
   useEffect(() => {
-    if (!activeVersion) return;
+    if (!activeVersionId) return;
 
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let isPageVisible = true;
@@ -2429,14 +2484,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     const poll = async () => {
       try {
         if (isMutatingRef.current || !isPageVisible) return;
-
-        const res = await fetch(apiBasePath, { cache: 'no-store' });
-        if (res.ok) {
-          const data = await res.json();
-          if (!isMutatingRef.current) {
-            setVideo(data.data);
-          }
-        }
+        await fetchVersionComments(activeVersionId, true);
       } catch { /* silent */ }
     };
 
@@ -2454,7 +2502,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
       if (intervalId) clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [activeVersion, apiBasePath]);
+  }, [activeVersionId, fetchVersionComments]);
 
   const handleNewVersionUrlChange = (url: string) => {
     setNewVersionUrl(url);

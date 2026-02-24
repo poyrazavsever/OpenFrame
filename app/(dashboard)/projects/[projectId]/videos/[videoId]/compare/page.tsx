@@ -158,7 +158,7 @@ export default function CompareVersionsPage() {
   useEffect(() => {
     async function fetchVideo() {
       try {
-        const res = await fetch(`/api/projects/${projectId}/videos/${videoId}`);
+        const res = await fetch(`/api/projects/${projectId}/videos/${videoId}?includeComments=false`);
         if (!res.ok) {
           setError('Failed to load video');
           setLoading(false);

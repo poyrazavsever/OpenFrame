@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
@@ -34,6 +34,10 @@ async function isFreshAttachment(url: string, kind: 'audio' | 'image'): Promise<
     } catch {
         return false;
     }
+}
+
+function normalizeEtag(value: string): string {
+    return value.trim().replace(/^W\//, '');
 }
 
 // GET /api/versions/[versionId]/comments
@@ -103,6 +107,30 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { searchParams } = new URL(request.url);
         const includeResolved = searchParams.get('includeResolved') !== 'false';
 
+        const commentsRevision = await db.comment.aggregate({
+            where: {
+                versionId,
+                ...(includeResolved ? {} : { isResolved: false }),
+            },
+            _count: { id: true },
+            _max: { updatedAt: true },
+        });
+
+        const etag = `"comments:${versionId}:${includeResolved ? 1 : 0}:${commentsRevision._count.id}:${commentsRevision._max.updatedAt?.getTime() ?? 0}"`;
+        const ifNoneMatch = request.headers.get('if-none-match');
+        if (ifNoneMatch) {
+            const matches = ifNoneMatch
+                .split(',')
+                .map(normalizeEtag)
+                .includes(normalizeEtag(etag));
+
+            if (matches) {
+                const notModified = new NextResponse(null, { status: 304 });
+                notModified.headers.set('ETag', etag);
+                return withCacheControl(notModified, 'private, no-cache');
+            }
+        }
+
         const comments = await db.comment.findMany({
             where: {
                 versionId,
@@ -158,6 +186,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
 
         const response = successResponse({ comments });
+        response.headers.set('ETag', etag);
         return withCacheControl(response, 'private, no-cache');
     } catch (error) {
         console.error('Error fetching comments:', error);

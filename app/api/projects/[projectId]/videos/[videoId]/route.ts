@@ -18,6 +18,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
         // Parse query params for pagination and options
         const searchParams = request.nextUrl.searchParams;
+        const includeComments = searchParams.get('includeComments') !== 'false';
         const commentLimit = Math.min(parseInt(searchParams.get('commentLimit') || '50'), 100);
         const commentOffset = Math.max(0, parseInt(searchParams.get('commentOffset') || '0'));
         const includeReplies = searchParams.get('includeReplies') === 'true';
@@ -28,64 +29,80 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 project: true,
                 versions: {
                     orderBy: { versionNumber: 'desc' },
-                    include: {
-                        comments: {
-                            orderBy: { timestamp: 'asc' },
-                            skip: commentOffset,
-                            take: commentLimit,
-                            select: {
-                                id: true,
-                                content: true,
-                                timestamp: true,
-                                timestampEnd: true,
-                                createdAt: true,
-                                updatedAt: true,
-                                isResolved: true,
-                                resolvedAt: true,
-                                voiceUrl: true,
-                                voiceDuration: true,
-                                imageUrl: true,
-                                annotationData: true,
-                                parentId: true,
-                                authorId: true,
-                                tagId: true,
-                                versionId: true,
-                                guestName: true,
-                                // guestEmail excluded for privacy
-                                author: { select: { id: true, name: true, image: true } },
-                                tag: { select: { id: true, name: true, color: true } },
-                                ...(includeReplies ? {
-                                    replies: {
-                                        orderBy: { createdAt: 'asc' },
-                                        select: {
-                                            id: true,
-                                            content: true,
-                                            timestamp: true,
-                                            timestampEnd: true,
-                                            createdAt: true,
-                                            updatedAt: true,
-                                            isResolved: true,
-                                            resolvedAt: true,
-                                            voiceUrl: true,
-                                            voiceDuration: true,
-                                            imageUrl: true,
-                                            annotationData: true,
-                                            parentId: true,
-                                            authorId: true,
-                                            tagId: true,
-                                            versionId: true,
-                                            guestName: true,
-                                            // guestEmail excluded for privacy
-                                            author: { select: { id: true, name: true, image: true } },
-                                            tag: { select: { id: true, name: true, color: true } },
+                    ...(includeComments ? {
+                        include: {
+                            comments: {
+                                orderBy: { timestamp: 'asc' },
+                                skip: commentOffset,
+                                take: commentLimit,
+                                select: {
+                                    id: true,
+                                    content: true,
+                                    timestamp: true,
+                                    timestampEnd: true,
+                                    createdAt: true,
+                                    updatedAt: true,
+                                    isResolved: true,
+                                    resolvedAt: true,
+                                    voiceUrl: true,
+                                    voiceDuration: true,
+                                    imageUrl: true,
+                                    annotationData: true,
+                                    parentId: true,
+                                    authorId: true,
+                                    tagId: true,
+                                    versionId: true,
+                                    guestName: true,
+                                    // guestEmail excluded for privacy
+                                    author: { select: { id: true, name: true, image: true } },
+                                    tag: { select: { id: true, name: true, color: true } },
+                                    ...(includeReplies ? {
+                                        replies: {
+                                            orderBy: { createdAt: 'asc' },
+                                            select: {
+                                                id: true,
+                                                content: true,
+                                                timestamp: true,
+                                                timestampEnd: true,
+                                                createdAt: true,
+                                                updatedAt: true,
+                                                isResolved: true,
+                                                resolvedAt: true,
+                                                voiceUrl: true,
+                                                voiceDuration: true,
+                                                imageUrl: true,
+                                                annotationData: true,
+                                                parentId: true,
+                                                authorId: true,
+                                                tagId: true,
+                                                versionId: true,
+                                                guestName: true,
+                                                // guestEmail excluded for privacy
+                                                author: { select: { id: true, name: true, image: true } },
+                                                tag: { select: { id: true, name: true, color: true } },
+                                            },
                                         },
-                                    },
-                                } : {}),
+                                    } : {}),
+                                },
+                                where: { parentId: null },
                             },
-                            where: { parentId: null },
+                            _count: { select: { comments: true } },
                         },
-                        _count: { select: { comments: true } },
-                    },
+                    } : {
+                        select: {
+                            id: true,
+                            thumbnailUrl: true,
+                            duration: true,
+                            versionNumber: true,
+                            versionLabel: true,
+                            providerId: true,
+                            videoId: true,
+                            originalUrl: true,
+                            title: true,
+                            isActive: true,
+                            _count: { select: { comments: true } },
+                        },
+                    }),
                 },
             },
         });

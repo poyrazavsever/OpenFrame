@@ -8,7 +8,6 @@
 
 ## Validation before finishing
 - Run `bun run check`.
-- Run `bun test <path>` for changed behavior; run `bun test` when changes are cross-cutting.
 
 ## Repo-specific conventions
 - Use `auth()` from `@/lib/auth` for server-side session reads.
