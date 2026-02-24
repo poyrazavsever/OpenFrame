@@ -44,15 +44,26 @@ function formatRelativeTime(date: Date): string {
 
 interface WorkspacePageProps {
   params: Promise<{ workspaceId: string }>;
+  searchParams: Promise<{ page?: string }>;
 }
 
-export default async function WorkspacePage({ params }: WorkspacePageProps) {
+export default async function WorkspacePage({ params, searchParams }: WorkspacePageProps) {
   const session = await auth();
   const { workspaceId } = await params;
+  const resolvedSearchParams = await searchParams;
+  const MAX_PAGE = 1000;
 
   if (!session?.user?.id) {
     redirect('/login');
   }
+
+  const pageParam = resolvedSearchParams?.page;
+  const parsedPage = pageParam ? Number(pageParam) : 1;
+  const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 && parsedPage <= MAX_PAGE
+    ? parsedPage
+    : 1;
+  const pageSize = 20;
+  const skip = (page - 1) * pageSize;
 
   const workspace = await db.workspace.findUnique({
     where: { id: workspaceId },
@@ -64,6 +75,8 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
       },
       projects: {
         orderBy: { updatedAt: 'desc' },
+        skip,
+        take: pageSize,
         include: {
           _count: { select: { videos: true, members: true } },
         },
@@ -84,6 +97,8 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
   if (!isOwner && !isMember) {
     redirect('/workspaces');
   }
+
+  const totalPages = Math.ceil(workspace._count.projects / pageSize);
 
   return (
     <div className="px-6 lg:px-8 py-8 w-full">
@@ -143,42 +158,65 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
 
       {/* Projects Grid */}
       {workspace.projects.length > 0 ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {workspace.projects.map((project: (typeof workspace.projects)[number]) => (
-            <Link key={project.id} href={`/projects/${project.id}`}>
-              <Card className="h-full transition-colors hover:bg-accent/50 cursor-pointer">
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <FolderOpen className="h-5 w-5 text-primary" />
-                      {project.name}
-                    </CardTitle>
-                    <Badge variant="outline" className="flex items-center gap-1">
-                      <VisibilityIcon visibility={project.visibility} />
-                      {project.visibility.toLowerCase()}
-                    </Badge>
-                  </div>
-                  <CardDescription className="line-clamp-2">
-                    {project.description || 'No description'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3.5 w-3.5" />
-                      {formatRelativeTime(project.updatedAt)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Users className="h-3.5 w-3.5" />
-                      {project._count.members + 1}
-                    </span>
-                    <span>{project._count.videos} videos</span>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
+        <>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {workspace.projects.map((project: (typeof workspace.projects)[number]) => (
+              <Link key={project.id} href={`/projects/${project.id}`}>
+                <Card className="h-full transition-colors hover:bg-accent/50 cursor-pointer">
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <CardTitle className="flex items-center gap-2">
+                        <FolderOpen className="h-5 w-5 text-primary" />
+                        {project.name}
+                      </CardTitle>
+                      <Badge variant="outline" className="flex items-center gap-1">
+                        <VisibilityIcon visibility={project.visibility} />
+                        {project.visibility.toLowerCase()}
+                      </Badge>
+                    </div>
+                    <CardDescription className="line-clamp-2">
+                      {project.description || 'No description'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3.5 w-3.5" />
+                        {formatRelativeTime(project.updatedAt)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Users className="h-3.5 w-3.5" />
+                        {project._count.members + 1}
+                      </span>
+                      <span>{project._count.videos} videos</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div className="mt-8 flex items-center justify-end space-x-2">
+              <Button variant="outline" size="sm" disabled={page <= 1} asChild={page > 1}>
+                {page > 1 ? (
+                  <Link href={`/workspaces/${workspaceId}?page=${page - 1}`}>Previous</Link>
+                ) : (
+                  'Previous'
+                )}
+              </Button>
+              <span className="text-sm font-medium">
+                Page {page} of {totalPages}
+              </span>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} asChild={page < totalPages}>
+                {page < totalPages ? (
+                  <Link href={`/workspaces/${workspaceId}?page=${page + 1}`}>Next</Link>
+                ) : (
+                  'Next'
+                )}
+              </Button>
+            </div>
+          )}
+        </>
       ) : (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16">

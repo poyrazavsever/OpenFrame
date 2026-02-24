@@ -12,9 +12,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const session = await auth();
         const { workspaceId } = await params;
+        const MAX_LIMIT = 100;
+        const MAX_PAGE = 1000;
+        const MAX_OFFSET = 10000;
 
         if (!session?.user?.id) {
             return apiErrors.unauthorized();
+        }
+
+        const searchParams = request.nextUrl.searchParams;
+        const pageParam = searchParams.get('page');
+        const limitParam = searchParams.get('limit');
+
+        const pageRaw = pageParam === null ? 1 : Number(pageParam);
+        if (!Number.isSafeInteger(pageRaw) || pageRaw < 1 || pageRaw > MAX_PAGE) {
+            return apiErrors.badRequest('Invalid page. Must be a positive integer.');
+        }
+
+        const limitRaw = limitParam === null ? 20 : Number(limitParam);
+        if (!Number.isSafeInteger(limitRaw) || limitRaw < 1 || limitRaw > MAX_LIMIT) {
+            return apiErrors.badRequest('Invalid limit. Must be a positive integer between 1 and 100.');
+        }
+
+        const page = pageRaw;
+        const limit = limitRaw;
+        const skip = (page - 1) * limit;
+        if (!Number.isSafeInteger(skip) || skip > MAX_OFFSET) {
+            return apiErrors.badRequest('Invalid page range. Offset must be 10000 or less.');
         }
 
         const workspace = await db.workspace.findUnique({
@@ -35,13 +59,20 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return apiErrors.forbidden('Access denied');
         }
 
-        const members = await db.workspaceMember.findMany({
-            where: { workspaceId },
-            include: {
-                user: { select: { id: true, name: true, email: true, image: true } },
-            },
-            orderBy: { createdAt: 'asc' },
-        });
+        const [members, total] = await Promise.all([
+            db.workspaceMember.findMany({
+                where: { workspaceId },
+                include: {
+                    user: { select: { id: true, name: true, email: true, image: true } },
+                },
+                orderBy: { createdAt: 'asc' },
+                skip,
+                take: limit,
+            }),
+            db.workspaceMember.count({
+                where: { workspaceId },
+            }),
+        ]);
 
         // Include the owner as well
         const owner = await db.user.findUnique({
@@ -49,7 +80,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             select: { id: true, name: true, email: true, image: true },
         });
 
-        const response = successResponse({ members, owner });
+        const response = successResponse(
+            { members, owner },
+            200,
+            {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            }
+        );
         return withCacheControl(response, 'private, max-age=60, stale-while-revalidate=120');
     } catch (error) {
         console.error('Error fetching workspace members:', error);

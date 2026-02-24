@@ -5,30 +5,70 @@ import { rateLimit } from '@/lib/rate-limit';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 // GET /api/workspaces - List all workspaces for the authenticated user
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
         const session = await auth();
+        const MAX_LIMIT = 100;
+        const MAX_PAGE = 1000;
+        const MAX_OFFSET = 10000;
 
         if (!session?.user?.id) {
             return apiErrors.unauthorized();
         }
 
-        // Get workspaces where user is owner OR a member
-        const workspaces = await db.workspace.findMany({
-            where: {
-                OR: [
-                    { ownerId: session.user.id },
-                    { members: { some: { userId: session.user.id } } },
-                ],
-            },
-            include: {
-                owner: { select: { id: true, name: true, image: true } },
-                _count: { select: { projects: true, members: true } },
-            },
-            orderBy: { updatedAt: 'desc' },
-        });
+        const searchParams = request.nextUrl.searchParams;
+        const pageParam = searchParams.get('page');
+        const limitParam = searchParams.get('limit');
 
-        const response = successResponse({ workspaces });
+        const pageRaw = pageParam === null ? 1 : Number(pageParam);
+        if (!Number.isSafeInteger(pageRaw) || pageRaw < 1 || pageRaw > MAX_PAGE) {
+            return apiErrors.badRequest('Invalid page. Must be a positive integer.');
+        }
+
+        const limitRaw = limitParam === null ? 20 : Number(limitParam);
+        if (!Number.isSafeInteger(limitRaw) || limitRaw < 1 || limitRaw > MAX_LIMIT) {
+            return apiErrors.badRequest('Invalid limit. Must be a positive integer between 1 and 100.');
+        }
+
+        const page = pageRaw;
+        const limit = limitRaw;
+        const skip = (page - 1) * limit;
+        if (!Number.isSafeInteger(skip) || skip > MAX_OFFSET) {
+            return apiErrors.badRequest('Invalid page range. Offset must be 10000 or less.');
+        }
+
+        const where = {
+            OR: [
+                { ownerId: session.user.id },
+                { members: { some: { userId: session.user.id } } },
+            ],
+        };
+
+        // Get workspaces where user is owner OR a member
+        const [workspaces, total] = await Promise.all([
+            db.workspace.findMany({
+                where,
+                include: {
+                    owner: { select: { id: true, name: true, image: true } },
+                    _count: { select: { projects: true, members: true } },
+                },
+                orderBy: { updatedAt: 'desc' },
+                skip,
+                take: limit,
+            }),
+            db.workspace.count({ where }),
+        ]);
+
+        const response = successResponse(
+            { workspaces },
+            200,
+            {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            }
+        );
         return withCacheControl(response, 'private, max-age=60, stale-while-revalidate=120');
     } catch (error) {
         console.error('Error fetching workspaces:', error);

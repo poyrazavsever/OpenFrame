@@ -35,10 +35,28 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const session = await auth();
         const { workspaceId } = await params;
+        const MAX_LIMIT = 100;
+        const MAX_OFFSET = 10000;
 
         if (!session?.user?.id) {
             return apiErrors.unauthorized();
         }
+
+        const searchParams = request.nextUrl.searchParams;
+        const limitParam = searchParams.get('limit');
+        const offsetParam = searchParams.get('offset');
+
+        const limitRaw = limitParam === null ? 20 : Number(limitParam);
+        if (!Number.isSafeInteger(limitRaw) || limitRaw < 1 || limitRaw > MAX_LIMIT) {
+            return apiErrors.badRequest('Invalid limit. Must be a positive integer between 1 and 100.');
+        }
+
+        const offset = offsetParam === null ? 0 : Number(offsetParam);
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > MAX_OFFSET) {
+            return apiErrors.badRequest('Invalid offset. Must be a non-negative integer up to 10000.');
+        }
+
+        const limit = limitRaw;
 
         const workspace = await db.workspace.findUnique({
             where: { id: workspaceId },
@@ -51,6 +69,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 },
                 projects: {
                     orderBy: { updatedAt: 'desc' },
+                    skip: offset,
+                    take: limit,
                     include: {
                         _count: { select: { videos: true, members: true } },
                     },

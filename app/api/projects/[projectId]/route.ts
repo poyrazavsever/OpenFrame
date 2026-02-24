@@ -12,11 +12,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const session = await auth();
         const { projectId } = await params;
+        const MAX_LIMIT = 100;
+        const MAX_OFFSET = 10000;
 
         // Parse pagination params
         const searchParams = request.nextUrl.searchParams;
-        const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);
-        const offset = Math.max(0, parseInt(searchParams.get('offset') || '0'));
+        const limitParam = searchParams.get('limit');
+        const offsetParam = searchParams.get('offset');
+
+        const limitRaw = limitParam === null ? 20 : Number(limitParam);
+        if (!Number.isSafeInteger(limitRaw) || limitRaw < 1 || limitRaw > MAX_LIMIT) {
+            return apiErrors.badRequest('Invalid limit. Must be a positive integer between 1 and 100.');
+        }
+
+        const offset = offsetParam === null ? 0 : Number(offsetParam);
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > MAX_OFFSET) {
+            return apiErrors.badRequest('Invalid offset. Must be a non-negative integer up to 10000.');
+        }
+
+        const limit = limitRaw;
 
         const project = await db.project.findUnique({
             where: { id: projectId },

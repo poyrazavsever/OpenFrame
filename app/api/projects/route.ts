@@ -10,16 +10,35 @@ import { DEFAULT_COMMENT_TAGS } from '@/lib/comment-tags';
 export async function GET(request: NextRequest) {
     try {
         const session = await auth();
+        const MAX_LIMIT = 100;
+        const MAX_PAGE = 1000;
+        const MAX_OFFSET = 10000;
 
         if (!session?.user?.id) {
             return apiErrors.unauthorized();
         }
 
         const { searchParams } = new URL(request.url);
-        const page = parseInt(searchParams.get('page') || '1');
-        const limit = parseInt(searchParams.get('limit') || '10');
+        const pageParam = searchParams.get('page');
+        const limitParam = searchParams.get('limit');
         const workspaceId = searchParams.get('workspaceId');
+
+        const pageRaw = pageParam === null ? 1 : Number(pageParam);
+        if (!Number.isSafeInteger(pageRaw) || pageRaw < 1 || pageRaw > MAX_PAGE) {
+            return apiErrors.badRequest('Invalid page. Must be a positive integer.');
+        }
+
+        const limitRaw = limitParam === null ? 10 : Number(limitParam);
+        if (!Number.isSafeInteger(limitRaw) || limitRaw < 1 || limitRaw > MAX_LIMIT) {
+            return apiErrors.badRequest('Invalid limit. Must be a positive integer between 1 and 100.');
+        }
+
+        const page = pageRaw;
+        const limit = limitRaw;
         const skip = (page - 1) * limit;
+        if (!Number.isSafeInteger(skip) || skip > MAX_OFFSET) {
+            return apiErrors.badRequest('Invalid page range. Offset must be 10000 or less.');
+        }
 
         // Build base filter: user is owner OR a member
         const baseFilter: Record<string, unknown> = {
