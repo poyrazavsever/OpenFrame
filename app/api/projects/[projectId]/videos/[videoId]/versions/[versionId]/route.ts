@@ -2,7 +2,8 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth, checkProjectAccess } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
-import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
+import { cleanupBunnyStreamVideosBestEffort } from '@/lib/bunny-stream-cleanup';
+import { buildCleanupWarnings, logCleanupWarnings } from '@/lib/cleanup-warnings';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string; versionId: string }> };
@@ -110,31 +111,41 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         }
 
         const wasActive = result.version.isActive;
-
-        // Delete Bunny provider asset for this version before DB deletion.
-        await cleanupBunnyStreamVideos([{
+        const bunnyRef = {
             providerId: result.version.providerId,
             videoId: result.version.videoId,
-        }]);
+        };
 
-        // Delete the version (cascades to comments)
-        await db.videoVersion.delete({ where: { id: versionId } });
+        await db.$transaction(async (tx) => {
+            // Delete the version (cascades to comments).
+            await tx.videoVersion.delete({ where: { id: versionId } });
 
-        // If the deleted version was active, activate the latest remaining one
-        if (wasActive) {
-            const latestVersion = await db.videoVersion.findFirst({
-                where: { videoParentId: videoId },
-                orderBy: { versionNumber: 'desc' },
-            });
-            if (latestVersion) {
-                await db.videoVersion.update({
-                    where: { id: latestVersion.id },
-                    data: { isActive: true },
+            // If the deleted version was active, activate the latest remaining one.
+            if (wasActive) {
+                const latestVersion = await tx.videoVersion.findFirst({
+                    where: { videoParentId: videoId },
+                    orderBy: { versionNumber: 'desc' },
                 });
+                if (latestVersion) {
+                    await tx.videoVersion.update({
+                        where: { id: latestVersion.id },
+                        data: { isActive: true },
+                    });
+                }
             }
+        });
+
+        const bunnyCleanupResult = await cleanupBunnyStreamVideosBestEffort([bunnyRef]);
+        const cleanupInput = { bunny: bunnyCleanupResult };
+        const cleanupWarnings = buildCleanupWarnings(cleanupInput);
+        if (cleanupWarnings) {
+            logCleanupWarnings({ entityType: 'video-version', entityId: versionId }, cleanupInput);
         }
 
-        const response = successResponse({ message: 'Version deleted' });
+        const response = successResponse({
+            message: 'Version deleted',
+            ...(cleanupWarnings ? { cleanupWarnings } : {}),
+        });
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
         console.error('Error deleting version:', error);

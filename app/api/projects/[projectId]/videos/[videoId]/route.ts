@@ -3,8 +3,9 @@ import { revalidatePath } from 'next/cache';
 import { db } from '@/lib/db';
 import { auth, checkProjectAccess } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
-import { cleanupVideoMediaFiles } from '@/lib/r2-cleanup';
-import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
+import { collectVideoMediaUrls, deleteMediaFilesBestEffort } from '@/lib/r2-cleanup';
+import { cleanupBunnyStreamVideosBestEffort } from '@/lib/bunny-stream-cleanup';
+import { buildCleanupWarnings, logCleanupWarnings } from '@/lib/cleanup-warnings';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string; videoId: string }> };
@@ -234,8 +235,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             return apiErrors.forbidden('Only project owner or admin can delete videos');
         }
 
-        // Delete Bunny provider videos first to avoid orphaned assets.
-        await cleanupBunnyStreamVideos([
+        const bunnyRefs = [
             ...video.versions,
             ...video.assets
                 .filter((asset) => asset.provider === 'BUNNY' && !!asset.providerVideoId)
@@ -243,16 +243,31 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
                     providerId: 'bunny',
                     videoId: asset.providerVideoId as string,
                 })),
-        ]);
+        ];
 
-        // Clean up voice files from R2 before cascade delete removes comment rows
-        await cleanupVideoMediaFiles(videoId);
+        const mediaUrls = await collectVideoMediaUrls(videoId);
 
         await db.video.delete({ where: { id: videoId } });
 
         revalidatePath(`/projects/${projectId}`);
 
-        const response = successResponse({ message: 'Video deleted' });
+        const [bunnyCleanupResult, r2CleanupResult] = await Promise.all([
+            cleanupBunnyStreamVideosBestEffort(bunnyRefs),
+            deleteMediaFilesBestEffort(mediaUrls),
+        ]);
+        const cleanupInput = {
+            bunny: bunnyCleanupResult,
+            r2: r2CleanupResult,
+        };
+        const cleanupWarnings = buildCleanupWarnings(cleanupInput);
+        if (cleanupWarnings) {
+            logCleanupWarnings({ entityType: 'video', entityId: videoId }, cleanupInput);
+        }
+
+        const response = successResponse({
+            message: 'Video deleted',
+            ...(cleanupWarnings ? { cleanupWarnings } : {}),
+        });
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
         console.error('Error deleting video:', error);

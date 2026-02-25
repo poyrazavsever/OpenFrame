@@ -59,10 +59,11 @@ interface VideoCardProps {
     lastUpdated: string;
   };
   projectId: string;
+  canManage: boolean;
   onDeleted?: (videoId: string) => void;
 }
 
-export function VideoCard({ video, projectId, onDeleted }: VideoCardProps) {
+export function VideoCard({ video, projectId, canManage, onDeleted }: VideoCardProps) {
   const router = useRouter();
   const [imgError, setImgError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -242,42 +243,44 @@ export function VideoCard({ video, projectId, onDeleted }: VideoCardProps) {
                 </div>
               </Link>
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
-                    onClick={(e) => e.stopPropagation()}
-                    disabled={isDeleting}
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem asChild>
-                    <Link href={`/projects/${projectId}/videos/${video.id}/share`}>
-                      <Share2 className="mr-2 h-4 w-4" />
-                      Share
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setShowEditDialog(true)}>
-                    <Pencil className="mr-2 h-4 w-4" />
-                    Edit
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setShowVersionDialog(true)}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Version
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="text-destructive"
-                    onSelect={() => setShowDeleteDialog(true)}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {canManage ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                      disabled={isDeleting}
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem asChild>
+                      <Link href={`/projects/${projectId}/videos/${video.id}/share`}>
+                        <Share2 className="mr-2 h-4 w-4" />
+                        Share
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setShowEditDialog(true)}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Edit
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setShowVersionDialog(true)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Version
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-destructive"
+                      onSelect={() => setShowDeleteDialog(true)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
             </div>
           </CardContent>
         </Card>

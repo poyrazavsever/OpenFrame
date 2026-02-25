@@ -1,35 +1,13 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { auth, checkWorkspaceAccess } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
-import { cleanupWorkspaceMediaFiles } from '@/lib/r2-cleanup';
-import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
+import { collectWorkspaceMediaUrls, deleteMediaFilesBestEffort } from '@/lib/r2-cleanup';
+import { cleanupBunnyStreamVideosBestEffort } from '@/lib/bunny-stream-cleanup';
+import { buildCleanupWarnings, logCleanupWarnings } from '@/lib/cleanup-warnings';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ workspaceId: string }> };
-
-// Helper to check workspace access
-async function checkWorkspaceAccess(workspaceId: string, userId: string) {
-    const workspace = await db.workspace.findUnique({
-        where: { id: workspaceId },
-        include: {
-            members: { where: { userId } },
-        },
-    });
-
-    if (!workspace) return { workspace: null, role: null, isOwner: false, isAdmin: false };
-
-    const isOwner = workspace.ownerId === userId;
-    const membership = workspace.members[0];
-    const role = isOwner ? 'OWNER' : membership?.role || null;
-
-    return {
-        workspace,
-        role,
-        isOwner,
-        isAdmin: isOwner || role === 'ADMIN',
-    };
-}
 
 // GET /api/workspaces/[workspaceId] - Get a single workspace
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -84,11 +62,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Workspace');
         }
 
-        // Check access
-        const isOwner = session?.user?.id === workspace.ownerId;
-        const isMember = workspace.members.some((m: { userId: string }) => m.userId === session?.user?.id);
-
-        if (!isOwner && !isMember) {
+        const access = await checkWorkspaceAccess(
+            { id: workspace.id, ownerId: workspace.ownerId },
+            session.user.id
+        );
+        if (!access.hasAccess) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -113,8 +91,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             return apiErrors.unauthorized();
         }
 
-        const { isAdmin } = await checkWorkspaceAccess(workspaceId, session.user.id);
-        if (!isAdmin) {
+        const workspaceAccessTarget = await db.workspace.findUnique({
+            where: { id: workspaceId },
+            select: { id: true, ownerId: true },
+        });
+        if (!workspaceAccessTarget) {
+            return apiErrors.notFound('Workspace');
+        }
+
+        const access = await checkWorkspaceAccess(workspaceAccessTarget, session.user.id);
+        if (!access.canEdit) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -155,18 +141,20 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             return apiErrors.unauthorized();
         }
 
-        const { isOwner, workspace } = await checkWorkspaceAccess(workspaceId, session.user.id);
-
+        const workspace = await db.workspace.findUnique({
+            where: { id: workspaceId },
+            select: { id: true, ownerId: true },
+        });
         if (!workspace) {
             return apiErrors.notFound('Workspace');
         }
 
-        if (!isOwner) {
+        const access = await checkWorkspaceAccess(workspace, session.user.id);
+        if (!access.canDelete) {
             return apiErrors.forbidden('Only the workspace owner can delete it');
         }
 
-        // Delete Bunny provider videos first to avoid orphaned external assets.
-        const [workspaceVersionRefs, workspaceAssetRefs] = await Promise.all([
+        const [workspaceVersionRefs, workspaceAssetRefs, mediaUrls] = await Promise.all([
             db.videoVersion.findMany({
                 where: {
                     video: {
@@ -194,21 +182,37 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
                     providerVideoId: true,
                 },
             }),
+            collectWorkspaceMediaUrls(workspaceId),
         ]);
-        await cleanupBunnyStreamVideos([
+
+        const bunnyRefs = [
             ...workspaceVersionRefs,
             ...workspaceAssetRefs.map((asset) => ({
                 providerId: 'bunny',
                 videoId: asset.providerVideoId as string,
             })),
-        ]);
-
-        // Clean up voice files from R2 before cascade delete removes comment rows
-        await cleanupWorkspaceMediaFiles(workspaceId);
+        ];
 
         await db.workspace.delete({ where: { id: workspaceId } });
 
-        const response = successResponse({ message: 'Workspace deleted' });
+        const [bunnyCleanupResult, r2CleanupResult] = await Promise.all([
+            cleanupBunnyStreamVideosBestEffort(bunnyRefs),
+            deleteMediaFilesBestEffort(mediaUrls),
+        ]);
+
+        const cleanupInput = {
+            bunny: bunnyCleanupResult,
+            r2: r2CleanupResult,
+        };
+        const cleanupWarnings = buildCleanupWarnings(cleanupInput);
+        if (cleanupWarnings) {
+            logCleanupWarnings({ entityType: 'workspace', entityId: workspaceId }, cleanupInput);
+        }
+
+        const response = successResponse({
+            message: 'Workspace deleted',
+            ...(cleanupWarnings ? { cleanupWarnings } : {}),
+        });
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
         console.error('Error deleting workspace:', error);

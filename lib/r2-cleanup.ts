@@ -8,17 +8,25 @@ const IMAGE_PATH_PREFIX = '/api/upload/image/';
 /** The path prefix for audio URLs served by the upload API. */
 const AUDIO_PATH_PREFIX = '/api/upload/audio/';
 const CLEANUP_DELETE_CONCURRENCY = 5;
+const SAFE_IMAGE_PATH = /^\/api\/upload\/image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+const SAFE_AUDIO_PATH = /^\/api\/upload\/audio\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+
+export interface R2CleanupResult {
+    attempted: number;
+    failed: number;
+    failedKeys: string[];
+}
 
 /**
  * Extract the R2 object key from a media URL.
- * Uses string parsing instead of regex to avoid ReDoS risk on untrusted input.
+ * Accept only canonical upload URLs before deriving a storage key.
  */
-function mediaUrlToKey(url: string): string | null {
-    if (url.includes(AUDIO_PATH_PREFIX)) {
-        const filename = url.slice(url.indexOf(AUDIO_PATH_PREFIX) + AUDIO_PATH_PREFIX.length);
+export function mediaUrlToKey(url: string): string | null {
+    if (SAFE_AUDIO_PATH.test(url)) {
+        const filename = url.slice(AUDIO_PATH_PREFIX.length);
         return filename ? `voice/${filename}` : null;
-    } else if (url.includes(IMAGE_PATH_PREFIX)) {
-        const filename = url.slice(url.indexOf(IMAGE_PATH_PREFIX) + IMAGE_PATH_PREFIX.length);
+    } else if (SAFE_IMAGE_PATH.test(url)) {
+        const filename = url.slice(IMAGE_PATH_PREFIX.length);
         return filename ? `images/${filename}` : null;
     }
     return null;
@@ -27,8 +35,25 @@ function mediaUrlToKey(url: string): string | null {
 /**
  * Delete a list of media files from R2 (best-effort, logs failures).
  */
-async function deleteMediaFiles(mediaUrls: string[]) {
-    const mediaKeys = [...new Set(mediaUrls.map(mediaUrlToKey).filter((key): key is string => Boolean(key)))];
+export async function deleteMediaFilesBestEffort(mediaUrls: string[]): Promise<R2CleanupResult> {
+    const invalidUrls: string[] = [];
+    const mediaKeys = [...new Set(
+        mediaUrls
+            .map((url) => {
+                const key = mediaUrlToKey(url);
+                if (!key) invalidUrls.push(url);
+                return key;
+            })
+            .filter((key): key is string => Boolean(key))
+    )];
+    const failedKeys = new Set<string>();
+
+    if (invalidUrls.length > 0) {
+        console.error('Skipping non-canonical media URLs during R2 cleanup', {
+            rejectedCount: invalidUrls.length,
+            rejectedSamples: invalidUrls.slice(0, 10),
+        });
+    }
 
     await runWithConcurrency(mediaKeys, CLEANUP_DELETE_CONCURRENCY, async (key) => {
         try {
@@ -36,9 +61,16 @@ async function deleteMediaFiles(mediaUrls: string[]) {
                 new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key })
             );
         } catch (err) {
+            failedKeys.add(key);
             console.error(`Failed to delete media from R2 (key: ${key}):`, err);
         }
     });
+
+    return {
+        attempted: mediaKeys.length,
+        failed: failedKeys.size,
+        failedKeys: [...failedKeys],
+    };
 }
 
 /**
@@ -140,7 +172,7 @@ export async function collectWorkspaceMediaUrls(workspaceId: string): Promise<st
  */
 export async function cleanupVideoMediaFiles(videoId: string) {
     const urls = await collectVideoMediaUrls(videoId);
-    await deleteMediaFiles(urls);
+    await deleteMediaFilesBestEffort(urls);
 }
 
 /**
@@ -149,7 +181,7 @@ export async function cleanupVideoMediaFiles(videoId: string) {
  */
 export async function cleanupProjectMediaFiles(projectId: string) {
     const urls = await collectProjectMediaUrls(projectId);
-    await deleteMediaFiles(urls);
+    await deleteMediaFilesBestEffort(urls);
 }
 
 /**
@@ -158,5 +190,5 @@ export async function cleanupProjectMediaFiles(projectId: string) {
  */
 export async function cleanupWorkspaceMediaFiles(workspaceId: string) {
     const urls = await collectWorkspaceMediaUrls(workspaceId);
-    await deleteMediaFiles(urls);
+    await deleteMediaFilesBestEffort(urls);
 }

@@ -2,8 +2,9 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth, checkProjectAccess } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
-import { cleanupProjectMediaFiles } from '@/lib/r2-cleanup';
-import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
+import { collectProjectMediaUrls, deleteMediaFilesBestEffort } from '@/lib/r2-cleanup';
+import { cleanupBunnyStreamVideosBestEffort } from '@/lib/bunny-stream-cleanup';
+import { buildCleanupWarnings, logCleanupWarnings } from '@/lib/cleanup-warnings';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
@@ -158,7 +159,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             return apiErrors.forbidden('Only the project owner can delete it');
         }
 
-        const [projectVersionRefs, projectAssetRefs] = await Promise.all([
+        const [projectVersionRefs, projectAssetRefs, mediaUrls] = await Promise.all([
             db.videoVersion.findMany({
                 where: {
                     video: { projectId },
@@ -178,22 +179,37 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
                     providerVideoId: true,
                 },
             }),
+            collectProjectMediaUrls(projectId),
         ]);
 
-        await cleanupBunnyStreamVideos([
+        const bunnyRefs = [
             ...projectVersionRefs,
             ...projectAssetRefs.map((asset) => ({
                 providerId: 'bunny',
                 videoId: asset.providerVideoId as string,
             })),
-        ]);
-
-        // Clean up voice files from R2 before cascade delete removes comment rows
-        await cleanupProjectMediaFiles(projectId);
+        ];
 
         await db.project.delete({ where: { id: projectId } });
 
-        const response = successResponse({ message: 'Project deleted' });
+        const [bunnyCleanupResult, r2CleanupResult] = await Promise.all([
+            cleanupBunnyStreamVideosBestEffort(bunnyRefs),
+            deleteMediaFilesBestEffort(mediaUrls),
+        ]);
+
+        const cleanupInput = {
+            bunny: bunnyCleanupResult,
+            r2: r2CleanupResult,
+        };
+        const cleanupWarnings = buildCleanupWarnings(cleanupInput);
+        if (cleanupWarnings) {
+            logCleanupWarnings({ entityType: 'project', entityId: projectId }, cleanupInput);
+        }
+
+        const response = successResponse({
+            message: 'Project deleted',
+            ...(cleanupWarnings ? { cleanupWarnings } : {}),
+        });
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
         console.error('Error deleting project:', error);

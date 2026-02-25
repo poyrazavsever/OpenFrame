@@ -113,6 +113,8 @@ export const VideoPageHeader = memo(function VideoPageHeader({
   onOpenApprovalRequest,
   onOpenApprovalsPanel,
 }: VideoPageHeaderProps) {
+  const canManageVideo = canShareVideo || canRequestApproval;
+
   return (
     <div className={cn(
       'shrink-0 flex items-center justify-between h-12 px-4 border-b bg-background/50 gap-3',
@@ -188,10 +190,12 @@ export const VideoPageHeader = memo(function VideoPageHeader({
 
         {mode === 'dashboard' && (
           <>
-            <Button variant="outline" size="sm" onClick={() => setShowVersionDialog(true)} className="hidden sm:inline-flex">
-              <Plus className="h-4 w-4 mr-1" />
-              New Version
-            </Button>
+            {canManageVideo ? (
+              <Button variant="outline" size="sm" onClick={() => setShowVersionDialog(true)} className="hidden sm:inline-flex">
+                <Plus className="h-4 w-4 mr-1" />
+                New Version
+              </Button>
+            ) : null}
 
             <Button variant="outline" size="sm" onClick={onOpenApprovalsPanel} className="hidden sm:inline-flex">
               <ListChecks className="h-4 w-4 mr-1" />
@@ -208,67 +212,71 @@ export const VideoPageHeader = memo(function VideoPageHeader({
               </Button>
             )}
 
-            <div className="hidden">
-              <VersionActionsDialog
-                open={showVersionDialog}
-                onOpenChange={setShowVersionDialog}
-                newVersionMode={newVersionMode}
-                onNewVersionModeChange={setNewVersionMode}
-                newVersionUrl={newVersionUrl}
-                onNewVersionUrlChange={handleNewVersionUrlChange}
-                newVersionUrlError={newVersionUrlError}
-                newVersionSource={newVersionSource}
-                newVersionFile={newVersionFile}
-                onNewVersionFileChange={setNewVersionFile}
-                newVersionLabel={newVersionLabel}
-                onNewVersionLabelChange={setNewVersionLabel}
-                newVersionUploadStatus={newVersionUploadStatus}
-                newVersionUploadProgress={newVersionUploadProgress}
-                isCreatingVersion={isCreatingVersion}
-                versionsCount={versions.length}
-                onCreateVersion={onCreateVersion}
-              />
-            </div>
+            {canManageVideo ? (
+              <div className="hidden">
+                <VersionActionsDialog
+                  open={showVersionDialog}
+                  onOpenChange={setShowVersionDialog}
+                  newVersionMode={newVersionMode}
+                  onNewVersionModeChange={setNewVersionMode}
+                  newVersionUrl={newVersionUrl}
+                  onNewVersionUrlChange={handleNewVersionUrlChange}
+                  newVersionUrlError={newVersionUrlError}
+                  newVersionSource={newVersionSource}
+                  newVersionFile={newVersionFile}
+                  onNewVersionFileChange={setNewVersionFile}
+                  newVersionLabel={newVersionLabel}
+                  onNewVersionLabelChange={setNewVersionLabel}
+                  newVersionUploadStatus={newVersionUploadStatus}
+                  newVersionUploadProgress={newVersionUploadProgress}
+                  isCreatingVersion={isCreatingVersion}
+                  versionsCount={versions.length}
+                  onCreateVersion={onCreateVersion}
+                />
+              </div>
+            ) : null}
 
-            <div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="w-7 px-0 self-center">
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {canShareVideo ? (
-                    <DropdownMenuItem asChild>
-                      <Link href={`/projects/${projectId}/videos/${videoId}/share`}>
+            {(canShareVideo || canRequestApproval) && (
+              <div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="w-7 px-0 self-center">
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {canShareVideo ? (
+                      <DropdownMenuItem asChild>
+                        <Link href={`/projects/${projectId}/videos/${videoId}/share`}>
+                          <Share2 className="h-4 w-4 mr-2" />
+                          Share Video
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem disabled>
                         <Share2 className="h-4 w-4 mr-2" />
                         Share Video
-                      </Link>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
+                      onSelect={onOpenApprovalRequest}
+                      disabled={!canRequestApproval}
+                    >
+                      <ShieldCheck className="h-4 w-4 mr-2" />
+                      Request Approval
                     </DropdownMenuItem>
-                  ) : (
-                    <DropdownMenuItem disabled>
-                      <Share2 className="h-4 w-4 mr-2" />
-                      Share Video
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem
-                    onSelect={onOpenApprovalRequest}
-                    disabled={!canRequestApproval}
-                  >
-                    <ShieldCheck className="h-4 w-4 mr-2" />
-                    Request Approval
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DownloadMenuItems
-                    activeVersion={activeVersion}
-                    videoCanDownload={videoCanDownload}
-                    isDownloading={isDownloadingVideo}
-                    activeDownloadTarget={activeDownloadTarget}
-                    onDownload={onDownload}
-                  />
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+                    <DropdownMenuSeparator />
+                    <DownloadMenuItems
+                      activeVersion={activeVersion}
+                      videoCanDownload={videoCanDownload}
+                      isDownloading={isDownloadingVideo}
+                      activeDownloadTarget={activeDownloadTarget}
+                      onDownload={onDownload}
+                    />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
           </>
         )}
       </div>

@@ -1,14 +1,13 @@
-import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { VideoAssetProvider } from '@prisma/client';
 import { NextRequest } from 'next/server';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { rateLimit } from '@/lib/rate-limit';
 import { db } from '@/lib/db';
-import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
-import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
+import { cleanupBunnyStreamVideosBestEffort } from '@/lib/bunny-stream-cleanup';
+import { deleteMediaFilesBestEffort } from '@/lib/r2-cleanup';
+import { buildCleanupWarnings, logCleanupWarnings } from '@/lib/cleanup-warnings';
 import {
   canDeleteAssetForViewer,
-  extractImageKeyFromProxyUrl,
   getVideoAssetAccessContext,
 } from '@/lib/video-assets';
 
@@ -55,32 +54,32 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       }
     });
 
+    let r2CleanupResult: Awaited<ReturnType<typeof deleteMediaFilesBestEffort>> | undefined;
     if (asset.provider === VideoAssetProvider.R2_IMAGE && shouldDeleteImageObject) {
-      const imageKey = extractImageKeyFromProxyUrl(asset.sourceUrl);
-      if (imageKey) {
-        try {
-          await r2Client.send(new DeleteObjectCommand({
-            Bucket: R2_BUCKET_NAME,
-            Key: imageKey,
-          }));
-        } catch (error) {
-          console.error(`Failed to delete R2 image asset ${imageKey}:`, error);
-        }
-      }
+      r2CleanupResult = await deleteMediaFilesBestEffort([asset.sourceUrl]);
     }
 
+    let bunnyCleanupResult: Awaited<ReturnType<typeof cleanupBunnyStreamVideosBestEffort>> | undefined;
     if (asset.provider === VideoAssetProvider.BUNNY && asset.providerVideoId) {
-      try {
-        await cleanupBunnyStreamVideos([{
-          providerId: 'bunny',
-          videoId: asset.providerVideoId,
-        }]);
-      } catch (error) {
-        console.error(`Failed to cleanup Bunny asset ${asset.providerVideoId}:`, error);
-      }
+      bunnyCleanupResult = await cleanupBunnyStreamVideosBestEffort([{
+        providerId: 'bunny',
+        videoId: asset.providerVideoId,
+      }]);
     }
 
-    const response = successResponse({ message: 'Asset deleted' });
+    const cleanupInput = {
+      bunny: bunnyCleanupResult,
+      r2: r2CleanupResult,
+    };
+    const cleanupWarnings = buildCleanupWarnings(cleanupInput);
+    if (cleanupWarnings) {
+      logCleanupWarnings({ entityType: 'video-asset', entityId: asset.id }, cleanupInput);
+    }
+
+    const response = successResponse({
+      message: 'Asset deleted',
+      ...(cleanupWarnings ? { cleanupWarnings } : {}),
+    });
     return withCacheControl(response, 'private, no-store');
   } catch (error) {
     console.error('Error deleting video asset:', error);

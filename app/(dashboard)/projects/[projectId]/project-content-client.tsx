@@ -182,7 +182,13 @@ export function ProjectContentClient({
       {localVideos.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {sortedVideos.map((video) => (
-            <VideoCard key={video.id} video={video} projectId={projectId} onDeleted={handleVideoDeleted} />
+            <VideoCard
+              key={video.id}
+              video={video}
+              projectId={projectId}
+              canManage={canEdit}
+              onDeleted={handleVideoDeleted}
+            />
           ))}
         </div>
       ) : (
