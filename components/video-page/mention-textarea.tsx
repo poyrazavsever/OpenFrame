@@ -109,23 +109,26 @@ export function MentionTextarea({
   };
 
   const handleKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
-    if (mentionRange && filteredAssets.length > 0) {
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        setActiveIndex((prev) => (prev + 1) % filteredAssets.length);
-        return;
+    if (mentionRange) {
+      if (filteredAssets.length > 0) {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          setActiveIndex((prev) => (prev + 1) % filteredAssets.length);
+          return;
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          setActiveIndex((prev) => (prev - 1 + filteredAssets.length) % filteredAssets.length);
+          return;
+        }
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          const selected = filteredAssets[Math.min(activeIndex, filteredAssets.length - 1)];
+          if (selected) insertAssetMention(selected);
+          return;
+        }
       }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        setActiveIndex((prev) => (prev - 1 + filteredAssets.length) % filteredAssets.length);
-        return;
-      }
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        const selected = filteredAssets[Math.min(activeIndex, filteredAssets.length - 1)];
-        if (selected) insertAssetMention(selected);
-        return;
-      }
+
       if (event.key === 'Escape') {
         event.preventDefault();
         closeMentions();
@@ -154,25 +157,29 @@ export function MentionTextarea({
         }}
       />
 
-      {mentionRange && filteredAssets.length > 0 && (
+      {mentionRange && (
         <div className="absolute left-0 right-0 bottom-full mb-1 z-30 rounded-md border bg-popover shadow-md overflow-hidden">
-          {filteredAssets.map((asset, index) => (
-            <button
-              key={asset.id}
-              type="button"
-              className={cn(
-                'w-full text-left px-2 py-1.5 text-xs hover:bg-accent transition-colors',
-                index === activeIndex && 'bg-accent'
-              )}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                insertAssetMention(asset);
-              }}
-            >
-              <span className="font-medium">@{asset.displayName}</span>
-              <span className="ml-2 text-muted-foreground">{asset.provider}</span>
-            </button>
-          ))}
+          {filteredAssets.length === 0 ? (
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">No asset found</div>
+          ) : (
+            filteredAssets.map((asset, index) => (
+              <button
+                key={asset.id}
+                type="button"
+                className={cn(
+                  'w-full text-left px-2 py-1.5 text-xs hover:bg-accent transition-colors',
+                  index === activeIndex && 'bg-accent'
+                )}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  insertAssetMention(asset);
+                }}
+              >
+                <span className="font-medium">@{asset.displayName}</span>
+                <span className="ml-2 text-muted-foreground">{asset.provider}</span>
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>

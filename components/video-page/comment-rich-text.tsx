@@ -66,12 +66,11 @@ export function CommentRichText({ text, onAssetMentionClick, assets = [] }: Comm
         <span
           className={
             isVideoAsset
-              ? 'inline-flex h-4 shrink-0 items-center gap-0.5 rounded bg-violet-500/25 px-1 text-[9px] font-semibold tracking-wide text-violet-200'
-              : 'inline-flex h-4 shrink-0 items-center gap-0.5 rounded bg-emerald-500/25 px-1 text-[9px] font-semibold tracking-wide text-emerald-200'
+              ? 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-violet-500/25 text-violet-200'
+              : 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-emerald-500/25 text-emerald-200'
           }
         >
           {isVideoAsset ? <Video className="h-2.5 w-2.5" /> : <ImageIcon className="h-2.5 w-2.5" />}
-          {isVideoAsset ? 'VID' : 'SS'}
         </span>
         <span className="truncate max-w-[190px] sm:max-w-[240px]">
           @{label}
