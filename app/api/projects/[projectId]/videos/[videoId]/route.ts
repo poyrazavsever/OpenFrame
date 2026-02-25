@@ -126,6 +126,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             canManageTags: access.canEdit,
             canResolveComments: access.canEdit,
             canRequestApproval: access.canEdit,
+            canShareVideo: access.canEdit,
+            canUploadAssets: access.hasAccess,
+            canDownloadAssets: !!session?.user?.id && access.hasAccess,
         });
 
         return withCacheControl(response, 'private, no-cache');
@@ -212,6 +215,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
                         videoId: true,
                     },
                 },
+                assets: {
+                    select: {
+                        provider: true,
+                        providerVideoId: true,
+                    },
+                },
                 project: true,
             },
         });
@@ -226,7 +235,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         }
 
         // Delete Bunny provider videos first to avoid orphaned assets.
-        await cleanupBunnyStreamVideos(video.versions);
+        await cleanupBunnyStreamVideos([
+            ...video.versions,
+            ...video.assets
+                .filter((asset) => asset.provider === 'BUNNY' && !!asset.providerVideoId)
+                .map((asset) => ({
+                    providerId: 'bunny',
+                    videoId: asset.providerVideoId as string,
+                })),
+        ]);
 
         // Clean up voice files from R2 before cascade delete removes comment rows
         await cleanupVideoMediaFiles(videoId);

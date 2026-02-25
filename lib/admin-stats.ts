@@ -194,19 +194,31 @@ export const getCachedUserBunnyStorage = unstable_cache(
             const bunnyStats = await getCachedBunnyStorageStats();
             if (bunnyStats.totalBytes < 0) return perUserStorage;
 
-            const bunnyVersions = await db.videoVersion.findMany({
-                where: { providerId: 'bunny' },
-                select: {
-                    videoId: true,
-                    video: {
-                        select: {
-                            project: {
-                                select: { ownerId: true },
+            const [bunnyVersions, bunnyAssets] = await Promise.all([
+                db.videoVersion.findMany({
+                    where: { providerId: 'bunny' },
+                    select: {
+                        videoId: true,
+                        video: {
+                            select: {
+                                project: {
+                                    select: { ownerId: true },
+                                },
                             },
                         },
                     },
-                },
-            });
+                }),
+                db.videoAsset.findMany({
+                    where: {
+                        provider: 'BUNNY',
+                        providerVideoId: { not: null },
+                    },
+                    select: {
+                        providerVideoId: true,
+                        billedUserId: true,
+                    },
+                }),
+            ]);
 
             const seenVideoIds = new Set<string>();
             for (const version of bunnyVersions) {
@@ -217,6 +229,17 @@ export const getCachedUserBunnyStorage = unstable_cache(
 
                 const size = bunnyStats.byVideoId[version.videoId] || 0;
                 perUserStorage[ownerId] = (perUserStorage[ownerId] || 0) + size;
+            }
+
+            for (const asset of bunnyAssets) {
+                if (!asset.providerVideoId) continue;
+                const billedUserId = asset.billedUserId;
+                const dedupeKey = `${billedUserId}:${asset.providerVideoId}`;
+                if (seenVideoIds.has(dedupeKey)) continue;
+                seenVideoIds.add(dedupeKey);
+
+                const size = bunnyStats.byVideoId[asset.providerVideoId] || 0;
+                perUserStorage[billedUserId] = (perUserStorage[billedUserId] || 0) + size;
             }
         } catch (err) {
             console.error('Failed to calculate per-user Bunny storage:', err);
@@ -234,19 +257,21 @@ export async function getCachedUserMediaStorage(): Promise<Record<string, { tota
         const snapshot = await getR2StorageSnapshot();
         const seenKeys = new Set<string>();
 
-        const mediaComments = await db.comment.findMany({
-            where: { OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }] },
-            select: {
-                voiceUrl: true,
-                imageUrl: true,
-                version: {
-                    select: {
-                        video: {
-                            select: {
-                                project: {
-                                    select: {
-                                        workspace: {
-                                            select: { ownerId: true },
+        const [mediaComments, mediaAssets] = await Promise.all([
+            db.comment.findMany({
+                where: { OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }] },
+                select: {
+                    voiceUrl: true,
+                    imageUrl: true,
+                    version: {
+                        select: {
+                            video: {
+                                select: {
+                                    project: {
+                                        select: {
+                                            workspace: {
+                                                select: { ownerId: true },
+                                            },
                                         },
                                     },
                                 },
@@ -254,8 +279,15 @@ export async function getCachedUserMediaStorage(): Promise<Record<string, { tota
                         },
                     },
                 },
-            },
-        });
+            }),
+            db.videoAsset.findMany({
+                where: { provider: 'R2_IMAGE' },
+                select: {
+                    sourceUrl: true,
+                    billedUserId: true,
+                },
+            }),
+        ]);
 
         for (const comment of mediaComments) {
             const billedUserId = comment.version.video.project.workspace.ownerId;
@@ -290,6 +322,26 @@ export async function getCachedUserMediaStorage(): Promise<Record<string, { tota
                     userStorage[billedUserId].total += size;
                 }
             }
+        }
+
+        for (const asset of mediaAssets) {
+            const billedUserId = asset.billedUserId;
+            if (!billedUserId) continue;
+            if (!userStorage[billedUserId]) {
+                userStorage[billedUserId] = { total: 0, voice: 0, image: 0 };
+            }
+
+            const keyParts = asset.sourceUrl.split('/');
+            const filename = keyParts[keyParts.length - 1];
+            if (!filename) continue;
+            const r2Key = `images/${filename}`;
+            const dedupeKey = `${billedUserId}:${r2Key}`;
+            if (seenKeys.has(dedupeKey)) continue;
+            seenKeys.add(dedupeKey);
+
+            const size = snapshot.fileSizes.get(r2Key) || 0;
+            userStorage[billedUserId].image += size;
+            userStorage[billedUserId].total += size;
         }
     } catch (err) {
         console.error('Failed to parse user storage:', err);

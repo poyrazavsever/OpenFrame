@@ -29,6 +29,8 @@ model User {
   workspaceMemberships WorkspaceMember[]
   projects           Project[]
   comments           Comment[]
+  uploadedVideoAssets VideoAsset[] @relation("VideoAssetUploadedBy")
+  billedVideoAssets   VideoAsset[] @relation("VideoAssetBilledTo")
   projectMemberships ProjectMember[]
   notificationSetting NotificationSetting?
   watchProgress      WatchProgress[]
@@ -63,6 +65,17 @@ enum FeedbackStatus {
 enum DownloadEgressSource {
   ORIGINAL
   COMPRESSED
+}
+
+enum VideoAssetKind {
+  IMAGE
+  VIDEO
+}
+
+enum VideoAssetProvider {
+  R2_IMAGE
+  YOUTUBE
+  BUNNY
 }
 
 model DownloadEgressEvent {
@@ -303,6 +316,7 @@ model Video {
   
   // Relations
   versions    VideoVersion[]
+  assets      VideoAsset[]
   shareLinks  ShareLink[]
   
   @@index([projectId])
@@ -343,6 +357,33 @@ model VideoVersion {
   @@index([videoParentId])
   @@index([videoParentId, isActive])
   @@map("video_versions")
+}
+
+model VideoAsset {
+  id                       String             @id @default(cuid())
+  videoId                  String
+  video                    Video              @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  kind                     VideoAssetKind
+  provider                 VideoAssetProvider
+  displayName              String
+  sourceUrl                String
+  providerVideoId          String?
+  thumbnailUrl             String?
+  uploadedByUserId         String?
+  uploadedByUser           User?              @relation("VideoAssetUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  uploadedByGuestIdentityId String?
+  uploadedByGuestName      String?
+  billedUserId             String
+  billedUser               User               @relation("VideoAssetBilledTo", fields: [billedUserId], references: [id], onDelete: Cascade)
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  @@index([videoId])
+  @@index([billedUserId])
+  @@index([provider])
+  @@index([providerVideoId])
+  @@index([videoId, createdAt(sort: Desc)])
+  @@map("video_assets")
 }
 
 model Comment {

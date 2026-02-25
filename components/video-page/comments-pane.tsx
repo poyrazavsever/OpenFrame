@@ -1,11 +1,10 @@
 'use client';
 
 import { memo, type ReactNode, type RefObject } from 'react';
-import { ArrowUpRight, CheckCircle2, Circle, Clock, Download, FileText, Image as ImageIcon, Loader2, MessageSquare, Mic, MoreVertical, Pause, Pencil, Play, Reply, Tag, Trash2, X } from 'lucide-react';
+import { ArrowUpRight, CheckCircle2, ChevronDown, Circle, Clock, Download, FileText, FolderOpen, Image as ImageIcon, Loader2, MessageSquare, Mic, MoreVertical, Pause, Pencil, Play, Reply, Tag, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Textarea } from '@/components/ui/textarea';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,8 +13,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { Linkify } from '@/components/linkify';
-import type { Comment, CommentTag, Version } from '@/components/video-page/types';
+import { MentionTextarea } from '@/components/video-page/mention-textarea';
+import { CommentRichText } from '@/components/video-page/comment-rich-text';
+import type { Comment, CommentTag, Version, VideoAsset } from '@/components/video-page/types';
 
 interface CommentsPaneProps {
   isMobileCommentsOpen: boolean;
@@ -79,6 +79,11 @@ interface CommentsPaneProps {
   isUploadingReplyAudio: boolean;
   isUploadingReplyImage: boolean;
   composer: ReactNode;
+  assets: VideoAsset[];
+  onAssetMentionClick: (assetId: string) => void;
+  activePane: 'comments' | 'assets';
+  setActivePane: (pane: 'comments' | 'assets') => void;
+  assetsPane: ReactNode;
 }
 
 export const CommentsPane = memo(function CommentsPane({
@@ -143,6 +148,11 @@ export const CommentsPane = memo(function CommentsPane({
   isUploadingReplyAudio,
   isUploadingReplyImage,
   composer,
+  assets,
+  onAssetMentionClick,
+  activePane,
+  setActivePane,
+  assetsPane,
 }: CommentsPaneProps) {
   return (
     <>
@@ -161,52 +171,94 @@ export const CommentsPane = memo(function CommentsPane({
         'lg:static lg:w-80 lg:shrink-0 lg:border-l lg:transition-none lg:translate-x-0 lg:shadow-none lg:z-auto',
         isFullscreenMode && !showComments ? 'hidden' : ''
       )}>
-        <div
-          className="shrink-0 flex items-center justify-between p-4 border-b lg:cursor-default"
-        >
-          <div className="flex items-center gap-2">
-            <MessageSquare className="h-5 w-5" />
-            <span className="font-medium">Comments</span>
-            <Badge variant="secondary">{comments.length}</Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleToggleShowResolved(); }}>
-              {showResolved ? 'Hide' : 'Show'} Resolved
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              disabled={!activeVersion || isGuest || isExportingCsv || isExportingPdf}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleExportComments('csv');
-              }}
-              title={isGuest ? 'CSV export requires an authenticated account' : 'Download comments as CSV'}
-            >
-              {isExportingCsv ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              disabled={!activeVersion || isExportingCsv || isExportingPdf}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleExportComments('pdf');
-              }}
-              title="Download comments as PDF"
-            >
-              {isExportingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" onClick={() => setIsMobileCommentsOpen(false)}>
+        <div className="shrink-0 p-4 border-b lg:cursor-default space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1 min-w-0 overflow-x-auto">
+              <Button
+                variant={activePane === 'comments' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={() => setActivePane('comments')}
+              >
+                <MessageSquare className="h-4 w-4 mr-1" />
+                Comments
+                <Badge variant="secondary" className="ml-2">{comments.length}</Badge>
+              </Button>
+              <Button
+                variant={activePane === 'assets' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={() => setActivePane('assets')}
+              >
+                <FolderOpen className="h-4 w-4 mr-1" />
+                Assets
+                <Badge variant="secondary" className="ml-2">{assets.length}</Badge>
+              </Button>
+            </div>
+            <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden shrink-0" onClick={() => setIsMobileCommentsOpen(false)}>
               <X className="h-4 w-4" />
             </Button>
           </div>
+
+          {activePane === 'comments' && (
+            <div className="flex w-full items-center justify-end gap-2 flex-wrap">
+              <Button
+                variant={showResolved ? 'default' : 'outline'}
+                size="sm"
+                className="h-8"
+                onClick={(e) => { e.stopPropagation(); handleToggleShowResolved(); }}
+              >
+                Resolved
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2"
+                    disabled={!activeVersion || isExportingCsv || isExportingPdf}
+                    aria-label="Download comments"
+                    title="Download comments"
+                  >
+                    {isExportingCsv || isExportingPdf ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    <ChevronDown className="h-4 w-4 ml-0.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem
+                      disabled={!activeVersion || isGuest || isExportingCsv || isExportingPdf}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleExportComments('csv');
+                    }}
+                    title={isGuest ? 'CSV export requires an authenticated account' : 'Download comments as CSV'}
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Download CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!activeVersion || isExportingCsv || isExportingPdf}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      handleExportComments('pdf');
+                    }}
+                    title="Download comments as PDF"
+                    >
+                      <FileText className="h-4 w-4 mr-2" />
+                      Download PDF
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {filteredComments.length === 0 ? (
+          {activePane === 'assets' ? assetsPane : filteredComments.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p>No comments yet</p>
@@ -312,9 +364,10 @@ export const CommentsPane = memo(function CommentsPane({
 
                   {isEditing ? (
                     <div className="mb-2">
-                      <Textarea
+                      <MentionTextarea
                         value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
+                        onChange={setEditText}
+                        assets={assets}
                         rows={2}
                         className="resize-none text-sm mb-1"
                         autoFocus
@@ -402,7 +455,11 @@ export const CommentsPane = memo(function CommentsPane({
                     </div>
                   ) : (
                     <div className="mb-2">
-                      {comment.content && <p className="text-sm mb-2"><Linkify>{comment.content}</Linkify></p>}
+                      {comment.content && (
+                        <p className="text-sm mb-2">
+                          <CommentRichText text={comment.content} onAssetMentionClick={onAssetMentionClick} assets={assets} />
+                        </p>
+                      )}
                       {comment.imageUrl && (
                         <div
                           className="rounded-md overflow-hidden bg-muted mb-2 max-h-60 flex items-center justify-center cursor-pointer hover:opacity-90 transition-opacity"
@@ -530,9 +587,10 @@ export const CommentsPane = memo(function CommentsPane({
                             </div>
                             {isEditingReply ? (
                               <div className="mb-1">
-                                <Textarea
+                                <MentionTextarea
                                   value={editText}
-                                  onChange={(e) => setEditText(e.target.value)}
+                                  onChange={setEditText}
+                                  assets={assets}
                                   rows={2}
                                   className="resize-none text-sm mb-1"
                                   autoFocus
@@ -567,7 +625,11 @@ export const CommentsPane = memo(function CommentsPane({
                               </div>
                             ) : (
                               <div className="mb-1">
-                                {reply.content && <p className="text-sm"><Linkify>{reply.content}</Linkify></p>}
+                                {reply.content && (
+                                  <p className="text-sm">
+                                    <CommentRichText text={reply.content} onAssetMentionClick={onAssetMentionClick} assets={assets} />
+                                  </p>
+                                )}
                                 {reply.imageUrl && (
                                   <div
                                     className="rounded-md overflow-hidden bg-muted mt-2 max-h-40 flex items-center justify-center cursor-pointer hover:opacity-90 transition-opacity"
@@ -689,9 +751,10 @@ export const CommentsPane = memo(function CommentsPane({
                             </div>
                           )}
 
-                          <Textarea
+                          <MentionTextarea
                             value={replyText}
-                            onChange={(e) => setReplyText(e.target.value)}
+                            onChange={setReplyText}
+                            assets={assets}
                             placeholder="Add a note (optional)..."
                             rows={1}
                             className="resize-none text-sm"
@@ -725,9 +788,10 @@ export const CommentsPane = memo(function CommentsPane({
                             </div>
                           )}
                           <div className="flex gap-1">
-                            <Textarea
+                            <MentionTextarea
                               value={replyText}
-                              onChange={(e) => setReplyText(e.target.value)}
+                              onChange={setReplyText}
+                              assets={assets}
                               placeholder="Write a reply..."
                               rows={2}
                               className="resize-none text-sm flex-1"
@@ -807,7 +871,7 @@ export const CommentsPane = memo(function CommentsPane({
           )}
         </div>
 
-        {composer}
+        {activePane === 'comments' ? composer : null}
       </div>
     </>
   );

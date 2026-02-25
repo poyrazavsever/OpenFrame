@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { auth, checkProjectAccess } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
 import { cleanupProjectMediaFiles } from '@/lib/r2-cleanup';
+import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
@@ -156,6 +157,36 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         if (!access.canDelete) {
             return apiErrors.forbidden('Only the project owner can delete it');
         }
+
+        const [projectVersionRefs, projectAssetRefs] = await Promise.all([
+            db.videoVersion.findMany({
+                where: {
+                    video: { projectId },
+                },
+                select: {
+                    providerId: true,
+                    videoId: true,
+                },
+            }),
+            db.videoAsset.findMany({
+                where: {
+                    video: { projectId },
+                    provider: 'BUNNY',
+                    providerVideoId: { not: null },
+                },
+                select: {
+                    providerVideoId: true,
+                },
+            }),
+        ]);
+
+        await cleanupBunnyStreamVideos([
+            ...projectVersionRefs,
+            ...projectAssetRefs.map((asset) => ({
+                providerId: 'bunny',
+                videoId: asset.providerVideoId as string,
+            })),
+        ]);
 
         // Clean up voice files from R2 before cascade delete removes comment rows
         await cleanupProjectMediaFiles(projectId);

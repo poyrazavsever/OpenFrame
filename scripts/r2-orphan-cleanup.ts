@@ -79,7 +79,7 @@ async function findReferencedUrls(urls: string[]): Promise<Set<string>> {
   }).userFeedbackScreenshot;
 
   for (const group of chunk(urls, CHUNK_SIZE)) {
-    const [commentRows, feedbackRows, feedbackAttachmentRows] = await Promise.all([
+    const [commentRows, feedbackRows, feedbackAttachmentRows, assetRows] = await Promise.all([
       db.comment.findMany({
         where: {
           OR: [{ voiceUrl: { in: group } }, { imageUrl: { in: group } }],
@@ -99,6 +99,10 @@ async function findReferencedUrls(urls: string[]): Promise<Set<string>> {
           select: { url: true },
         })
         : Promise.resolve([] as Array<{ url: string }>),
+      db.videoAsset.findMany({
+        where: { sourceUrl: { in: group } },
+        select: { sourceUrl: true },
+      }),
     ]);
 
     for (const row of commentRows) {
@@ -110,6 +114,9 @@ async function findReferencedUrls(urls: string[]): Promise<Set<string>> {
     }
     for (const row of feedbackAttachmentRows) {
       if (row.url) referenced.add(row.url);
+    }
+    for (const row of assetRows) {
+      if (row.sourceUrl) referenced.add(row.sourceUrl);
     }
   }
 

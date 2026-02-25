@@ -6,10 +6,11 @@ const GUEST_UPLOAD_TOKEN_TYPE = 'guest-upload';
 const DEFAULT_GUEST_UPLOAD_TOKEN_TTL_SECONDS = 60 * 3;
 const GUEST_UPLOAD_VIDEO_WINDOW_MS = 15 * 60 * 1000;
 const GUEST_UPLOAD_VIDEO_MAX_REQUESTS = 12;
+const GUEST_BUNNY_UPLOAD_VIDEO_MAX_REQUESTS = 4;
 const GUEST_UPLOAD_SESSION_WINDOW_MS = 15 * 60 * 1000;
 const GUEST_UPLOAD_SESSION_MAX_REQUESTS = 8;
 
-export type GuestUploadIntent = 'audio' | 'image';
+export type GuestUploadIntent = 'audio' | 'image' | 'bunny';
 
 interface GuestUploadTokenPayload {
   typ: typeof GUEST_UPLOAD_TOKEN_TYPE;
@@ -71,7 +72,7 @@ function isValidPayload(value: unknown): value is GuestUploadTokenPayload {
     && Number.isFinite(payload.iat)
     && typeof payload.exp === 'number'
     && Number.isFinite(payload.exp)
-    && (payload.intent === 'audio' || payload.intent === 'image')
+    && (payload.intent === 'audio' || payload.intent === 'image' || payload.intent === 'bunny')
     && typeof payload.ctx === 'string';
 }
 
@@ -150,17 +151,21 @@ export async function enforceGuestUploadQuota(
     );
   }
 
+  const videoScopedMaxRequests = intent === 'bunny'
+    ? GUEST_BUNNY_UPLOAD_VIDEO_MAX_REQUESTS
+    : GUEST_UPLOAD_VIDEO_MAX_REQUESTS;
+
   const videoScoped = await checkRateLimit(
     `${ip}:guest-upload:${intent}:video:${videoId}`,
     `guest-upload-${intent}-video`,
-    { windowMs: GUEST_UPLOAD_VIDEO_WINDOW_MS, maxRequests: GUEST_UPLOAD_VIDEO_MAX_REQUESTS }
+    { windowMs: GUEST_UPLOAD_VIDEO_WINDOW_MS, maxRequests: videoScopedMaxRequests }
   );
   if (!videoScoped.allowed) {
     return NextResponse.json(
       { error: 'Too many uploads for this video. Please wait before uploading again.' },
       {
         status: 429,
-        headers: rateLimitHeaders(videoScoped, GUEST_UPLOAD_VIDEO_MAX_REQUESTS),
+        headers: rateLimitHeaders(videoScoped, videoScopedMaxRequests),
       }
     );
   }

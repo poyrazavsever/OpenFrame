@@ -18,6 +18,23 @@ export interface CommentTag {
   color: string;
 }
 
+export interface VideoAsset {
+  id: string;
+  videoId: string;
+  kind: 'IMAGE' | 'VIDEO';
+  provider: 'R2_IMAGE' | 'YOUTUBE' | 'BUNNY';
+  displayName: string;
+  sourceUrl: string | null;
+  providerVideoId: string | null;
+  thumbnailUrl: string | null;
+  uploadedByUserId: string | null;
+  uploadedByGuestName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  uploadedByUser: { id: string; name: string | null; image: string | null } | null;
+  canDelete: boolean;
+}
+
 export interface ApprovalDecision {
   id: string;
   approverId: string;
@@ -111,6 +128,9 @@ export interface VideoData {
   canManageTags?: boolean;
   canResolveComments?: boolean;
   canRequestApproval?: boolean;
+  canShareVideo?: boolean;
+  canUploadAssets?: boolean;
+  canDownloadAssets?: boolean;
 }
 
 export interface BunnyQualityOption {

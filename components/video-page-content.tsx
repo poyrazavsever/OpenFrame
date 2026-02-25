@@ -23,6 +23,7 @@ import { useDownloadActions } from '@/components/video-page/hooks/use-download-a
 import { useVersionDurationSync } from '@/components/video-page/hooks/use-version-duration-sync';
 import { CommentComposer } from '@/components/video-page/comment-composer';
 import { CommentsPane } from '@/components/video-page/comments-pane';
+import { AssetsPane } from '@/components/video-page/assets-pane';
 import { ApprovalRequestDialog } from '@/components/video-page/approval-request-dialog';
 import { ApprovalRequestsPanel } from '@/components/video-page/approval-requests-panel';
 import type {
@@ -34,6 +35,7 @@ import type {
   VideoPageHeaderActions,
 } from '@/components/video-page/types';
 import { useApprovals } from '@/components/video-page/hooks/use-approvals';
+import { useVideoAssets } from '@/components/video-page/hooks/use-video-assets';
 
 function formatTime(seconds: number): string {
   const totalSeconds = Math.floor(seconds);
@@ -92,6 +94,8 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     toggleVoiceSpeed,
   } = useCommentMedia();
   const [showResolved, setShowResolved] = useState(false);
+  const [activeSidePane, setActiveSidePane] = useState<'comments' | 'assets'>('comments');
+  const [highlightedAssetId, setHighlightedAssetId] = useState<string | null>(null);
 
   const editAnnotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
 
@@ -139,6 +143,29 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const isGuest = video ? !video.isAuthenticated : false;
   const canInitializePlayer = mode !== 'watch' || !isGuest || guestNameConfirmed;
   const normalizedGuestName = guestName.trim();
+  const canUploadAssets = !!video?.canUploadAssets;
+  const canDownloadAssets = !!video?.canDownloadAssets;
+
+  const {
+    assets,
+    isLoadingAssets,
+    isCreatingAsset,
+    activeDeleteAssetId,
+    activeDownloadAssetId,
+    hasMoreAssets,
+    isLoadingMoreAssets,
+    loadMoreAssets,
+    createAsset,
+    deleteAsset,
+    downloadAsset,
+    getGuestUploadToken,
+  } = useVideoAssets({
+    videoId,
+    isAuthenticated: !!video?.isAuthenticated,
+    canUploadAssets,
+    canDownloadAssets,
+    guestName: normalizedGuestName,
+  });
 
   const {
     showVersionDialog,
@@ -181,6 +208,11 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     setShowResolved(prev => !prev);
   }, []);
 
+  const handleAssetMentionClick = useCallback((assetId: string) => {
+    setActiveSidePane('assets');
+    setHighlightedAssetId(assetId);
+  }, []);
+
   const { isExportingCsv, isExportingPdf, exportComments } = useCommentExport({
     activeVersionId,
     showResolved,
@@ -191,6 +223,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   const currentUserName = video?.currentUserName || null;
   const canResolveComments = !!video?.canResolveComments;
   const canRequestApproval = !!video?.canRequestApproval;
+  const canShareVideo = !!video?.canShareVideo;
 
   const {
     requests: approvalRequests,
@@ -655,6 +688,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             onCreateVersion={headerActions.onCreateVersion}
             onOpenCompare={headerActions.onOpenCompare}
             canRequestApproval={canRequestApproval}
+            canShareVideo={canShareVideo}
             hasPendingApprovalRequest={!!activePendingRequest}
             onOpenApprovalRequest={handleOpenApprovalRequestDialog}
             onOpenApprovalsPanel={handleOpenApprovalsPanel}
@@ -779,6 +813,31 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
           isSubmittingReply={isSubmittingReply}
           isUploadingReplyAudio={isUploadingReplyAudio}
           isUploadingReplyImage={isUploadingReplyImage}
+          assets={assets}
+          onAssetMentionClick={handleAssetMentionClick}
+          activePane={activeSidePane}
+          setActivePane={setActiveSidePane}
+          assetsPane={(
+            <AssetsPane
+              videoId={videoId}
+              assets={assets}
+              isLoadingAssets={isLoadingAssets}
+              isCreatingAsset={isCreatingAsset}
+              activeDeleteAssetId={activeDeleteAssetId}
+              activeDownloadAssetId={activeDownloadAssetId}
+              canUploadAssets={canUploadAssets}
+              canDownloadAssets={canDownloadAssets}
+              getGuestUploadToken={getGuestUploadToken}
+              createAsset={createAsset}
+              deleteAsset={deleteAsset}
+              downloadAsset={downloadAsset}
+              hasMoreAssets={hasMoreAssets}
+              isLoadingMoreAssets={isLoadingMoreAssets}
+              loadMoreAssets={loadMoreAssets}
+              highlightedAssetId={highlightedAssetId}
+              onHighlightedAssetHandled={() => setHighlightedAssetId(null)}
+            />
+          )}
           composer={(
             <CommentComposer
               isRecording={isRecording}
@@ -816,6 +875,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
               canManageTags={!!video.canManageTags}
               projectId={projectId}
               pauseVideoForAnnotation={composerActions.onPauseVideoForAnnotation}
+              assets={assets}
             />
           )}
         />

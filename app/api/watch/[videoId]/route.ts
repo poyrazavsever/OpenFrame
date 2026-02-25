@@ -182,6 +182,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const canCommentWithShareLink = shareAccess.canComment && (session?.user?.id ? true : shareAccess.allowGuests);
         const canDownloadWithMembership = access.hasAccess;
         const canDownloadWithShareLink = shareAccess.hasAccess && shareAccess.canDownload;
+        const canUploadAssets = canCommentWithMembership || canCommentWithShareLink;
+        const canDownloadAssets = !!session?.user?.id && (access.hasAccess || shareAccess.hasAccess);
         const response = successResponse({
             ...videoData,
             versions,
@@ -198,6 +200,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             canDownload: canDownloadWithMembership || canDownloadWithShareLink,
             canManageTags: access.canEdit,
             canResolveComments: access.canEdit,
+            canShareVideo: access.canEdit,
+            canUploadAssets,
+            canDownloadAssets,
         });
 
         return withCacheControl(response, 'private, no-cache');

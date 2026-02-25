@@ -14,6 +14,7 @@ import {
 import { toast } from 'sonner';
 import type { AnnotationCanvasHandle, AnnotationStroke } from '@/components/annotation-canvas';
 import type { Comment, CommentActionsConfig, CommentTag, Version, VideoData } from '@/components/video-page/types';
+import { extractPastedImageFile, validateImageFile } from '@/components/video-page/image-upload-utils';
 
 interface UseCommentActionsParams extends CommentActionsConfig {
   setVideo: Dispatch<SetStateAction<VideoData | null>>;
@@ -279,13 +280,9 @@ export function useCommentActions({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please select an image file');
-      return;
-    }
-
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('Image must be less than 10MB');
+    const imageError = validateImageFile(file);
+    if (imageError) {
+      toast.error(imageError);
       return;
     }
 
@@ -297,27 +294,21 @@ export function useCommentActions({
   }, []);
 
   const handlePaste = useCallback((e: ClipboardEvent<HTMLTextAreaElement>, isReply: boolean = false) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
+    const file = extractPastedImageFile(e.clipboardData);
+    if (!file) return;
 
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
-        const file = items[i].getAsFile();
-        if (file) {
-          if (file.size > 10 * 1024 * 1024) {
-            toast.error('Image must be less than 10MB');
-            return;
-          }
-          if (isReply) {
-            setReplyImageBlob(file);
-          } else {
-            setImageBlob(file);
-          }
-          e.preventDefault();
-          break;
-        }
-      }
+    const imageError = validateImageFile(file);
+    if (imageError) {
+      toast.error(imageError);
+      return;
     }
+
+    if (isReply) {
+      setReplyImageBlob(file);
+    } else {
+      setImageBlob(file);
+    }
+    e.preventDefault();
   }, []);
 
   const startRecording = useCallback(async () => {

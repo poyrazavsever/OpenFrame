@@ -61,6 +61,7 @@ interface VideoPageHeaderProps {
   onCreateVersion: () => void;
   onOpenCompare: () => void;
   canRequestApproval: boolean;
+  canShareVideo: boolean;
   hasPendingApprovalRequest: boolean;
   onOpenApprovalRequest: () => void;
   onOpenApprovalsPanel: () => void;
@@ -107,6 +108,7 @@ export const VideoPageHeader = memo(function VideoPageHeader({
   onCreateVersion,
   onOpenCompare,
   canRequestApproval,
+  canShareVideo,
   hasPendingApprovalRequest,
   onOpenApprovalRequest,
   onOpenApprovalsPanel,
@@ -231,17 +233,24 @@ export const VideoPageHeader = memo(function VideoPageHeader({
             <div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="icon" className="h-8 w-8">
+                  <Button variant="outline" size="sm" className="w-7 px-0 self-center">
                     <MoreVertical className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem asChild>
-                    <Link href={`/projects/${projectId}/videos/${videoId}/share`}>
+                  {canShareVideo ? (
+                    <DropdownMenuItem asChild>
+                      <Link href={`/projects/${projectId}/videos/${videoId}/share`}>
+                        <Share2 className="h-4 w-4 mr-2" />
+                        Share Video
+                      </Link>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem disabled>
                       <Share2 className="h-4 w-4 mr-2" />
                       Share Video
-                    </Link>
-                  </DropdownMenuItem>
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     onSelect={onOpenApprovalRequest}
                     disabled={!canRequestApproval}

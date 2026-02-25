@@ -142,15 +142,27 @@ async function findReferencedVideoIds(videoIds: string[]): Promise<Set<string>> 
   const referenced = new Set<string>();
 
   for (const group of chunk(videoIds, CHUNK_SIZE)) {
-    const rows = await db.videoVersion.findMany({
-      where: {
-        providerId: 'bunny',
-        videoId: { in: group },
-      },
-      select: { videoId: true },
-    });
-    rows.forEach((row) => {
+    const [versionRows, assetRows] = await Promise.all([
+      db.videoVersion.findMany({
+        where: {
+          providerId: 'bunny',
+          videoId: { in: group },
+        },
+        select: { videoId: true },
+      }),
+      db.videoAsset.findMany({
+        where: {
+          provider: 'BUNNY',
+          providerVideoId: { in: group },
+        },
+        select: { providerVideoId: true },
+      }),
+    ]);
+    versionRows.forEach((row) => {
       if (row.videoId) referenced.add(row.videoId);
+    });
+    assetRows.forEach((row) => {
+      if (row.providerVideoId) referenced.add(row.providerVideoId);
     });
   }
 

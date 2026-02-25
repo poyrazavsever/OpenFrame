@@ -166,20 +166,42 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         }
 
         // Delete Bunny provider videos first to avoid orphaned external assets.
-        const workspaceVersionRefs = await db.videoVersion.findMany({
-            where: {
-                video: {
-                    project: {
-                        workspaceId,
+        const [workspaceVersionRefs, workspaceAssetRefs] = await Promise.all([
+            db.videoVersion.findMany({
+                where: {
+                    video: {
+                        project: {
+                            workspaceId,
+                        },
                     },
                 },
-            },
-            select: {
-                providerId: true,
-                videoId: true,
-            },
-        });
-        await cleanupBunnyStreamVideos(workspaceVersionRefs);
+                select: {
+                    providerId: true,
+                    videoId: true,
+                },
+            }),
+            db.videoAsset.findMany({
+                where: {
+                    provider: 'BUNNY',
+                    providerVideoId: { not: null },
+                    video: {
+                        project: {
+                            workspaceId,
+                        },
+                    },
+                },
+                select: {
+                    providerVideoId: true,
+                },
+            }),
+        ]);
+        await cleanupBunnyStreamVideos([
+            ...workspaceVersionRefs,
+            ...workspaceAssetRefs.map((asset) => ({
+                providerId: 'bunny',
+                videoId: asset.providerVideoId as string,
+            })),
+        ]);
 
         // Clean up voice files from R2 before cascade delete removes comment rows
         await cleanupWorkspaceMediaFiles(workspaceId);

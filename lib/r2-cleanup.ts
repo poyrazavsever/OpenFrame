@@ -45,17 +45,29 @@ async function deleteMediaFiles(mediaUrls: string[]) {
  * Collect all media URLs from comments under a given video (all versions).
  */
 export async function collectVideoMediaUrls(videoId: string): Promise<string[]> {
-    const comments = await db.comment.findMany({
-        where: {
-            OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }],
-            version: { videoParentId: videoId },
-        },
-        select: { voiceUrl: true, imageUrl: true },
-    });
+    const [comments, assets] = await Promise.all([
+        db.comment.findMany({
+            where: {
+                OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }],
+                version: { videoParentId: videoId },
+            },
+            select: { voiceUrl: true, imageUrl: true },
+        }),
+        db.videoAsset.findMany({
+            where: {
+                videoId,
+                provider: 'R2_IMAGE',
+            },
+            select: { sourceUrl: true },
+        }),
+    ]);
     const urls: string[] = [];
     comments.forEach(c => {
         if (c.voiceUrl) urls.push(c.voiceUrl);
         if (c.imageUrl) urls.push(c.imageUrl);
+    });
+    assets.forEach((asset) => {
+        if (asset.sourceUrl) urls.push(asset.sourceUrl);
     });
     return urls;
 }
@@ -64,17 +76,29 @@ export async function collectVideoMediaUrls(videoId: string): Promise<string[]> 
  * Collect all media URLs from comments under all videos in a project.
  */
 export async function collectProjectMediaUrls(projectId: string): Promise<string[]> {
-    const comments = await db.comment.findMany({
-        where: {
-            OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }],
-            version: { video: { projectId } },
-        },
-        select: { voiceUrl: true, imageUrl: true },
-    });
+    const [comments, assets] = await Promise.all([
+        db.comment.findMany({
+            where: {
+                OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }],
+                version: { video: { projectId } },
+            },
+            select: { voiceUrl: true, imageUrl: true },
+        }),
+        db.videoAsset.findMany({
+            where: {
+                provider: 'R2_IMAGE',
+                video: { projectId },
+            },
+            select: { sourceUrl: true },
+        }),
+    ]);
     const urls: string[] = [];
     comments.forEach(c => {
         if (c.voiceUrl) urls.push(c.voiceUrl);
         if (c.imageUrl) urls.push(c.imageUrl);
+    });
+    assets.forEach((asset) => {
+        if (asset.sourceUrl) urls.push(asset.sourceUrl);
     });
     return urls;
 }
@@ -83,17 +107,29 @@ export async function collectProjectMediaUrls(projectId: string): Promise<string
  * Collect all media URLs from comments under all projects in a workspace.
  */
 export async function collectWorkspaceMediaUrls(workspaceId: string): Promise<string[]> {
-    const comments = await db.comment.findMany({
-        where: {
-            OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }],
-            version: { video: { project: { workspaceId } } },
-        },
-        select: { voiceUrl: true, imageUrl: true },
-    });
+    const [comments, assets] = await Promise.all([
+        db.comment.findMany({
+            where: {
+                OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }],
+                version: { video: { project: { workspaceId } } },
+            },
+            select: { voiceUrl: true, imageUrl: true },
+        }),
+        db.videoAsset.findMany({
+            where: {
+                provider: 'R2_IMAGE',
+                video: { project: { workspaceId } },
+            },
+            select: { sourceUrl: true },
+        }),
+    ]);
     const urls: string[] = [];
     comments.forEach(c => {
         if (c.voiceUrl) urls.push(c.voiceUrl);
         if (c.imageUrl) urls.push(c.imageUrl);
+    });
+    assets.forEach((asset) => {
+        if (asset.sourceUrl) urls.push(asset.sourceUrl);
     });
     return urls;
 }

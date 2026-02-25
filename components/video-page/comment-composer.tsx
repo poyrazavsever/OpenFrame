@@ -4,7 +4,6 @@ import { memo, type RefObject } from 'react';
 import Link from 'next/link';
 import { Image as ImageIcon, Loader2, Mic, Pause, Pencil, Play, Send, Tag, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,7 +12,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { AnnotationStroke } from '@/components/annotation-canvas';
-import type { CommentTag } from '@/components/video-page/types';
+import { MentionTextarea } from '@/components/video-page/mention-textarea';
+import type { CommentTag, VideoAsset } from '@/components/video-page/types';
 
 interface CommentComposerProps {
   isRecording: boolean;
@@ -51,6 +51,7 @@ interface CommentComposerProps {
   canManageTags: boolean;
   projectId?: string;
   pauseVideoForAnnotation: () => void;
+  assets: VideoAsset[];
 }
 
 export const CommentComposer = memo(function CommentComposer({
@@ -89,6 +90,7 @@ export const CommentComposer = memo(function CommentComposer({
   canManageTags,
   projectId,
   pauseVideoForAnnotation,
+  assets,
 }: CommentComposerProps) {
   return (
     <div className="shrink-0 p-4 border-t bg-background">
@@ -168,10 +170,11 @@ export const CommentComposer = memo(function CommentComposer({
             </div>
           )}
 
-          <Textarea
+          <MentionTextarea
             placeholder="Add a note to your voice comment (optional)..."
             value={commentText}
-            onChange={(e) => setCommentText(e.target.value)}
+            onChange={setCommentText}
+            assets={assets}
             rows={1}
             className="resize-none text-sm"
           />
@@ -222,21 +225,24 @@ export const CommentComposer = memo(function CommentComposer({
               </div>
             </div>
           )}
-          <div className="flex gap-2">
-            <Textarea
-              placeholder="Add a comment..."
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              rows={2}
-              className="resize-none text-sm"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  handleAddComment();
-                }
-              }}
-              onPaste={(e) => handlePaste(e, false)}
-            />
-            <div className="flex flex-col gap-1">
+          <div className="flex gap-2 items-stretch">
+            <div className="flex-1 min-w-0">
+              <MentionTextarea
+                placeholder="Add a comment..."
+                value={commentText}
+                onChange={setCommentText}
+                assets={assets}
+                rows={6}
+                className="resize-none text-sm min-h-[180px] w-full"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    handleAddComment();
+                  }
+                }}
+                onPaste={(e) => handlePaste(e, false)}
+              />
+            </div>
+            <div className="flex flex-col gap-1 self-end">
               <Button
                 size="icon"
                 onClick={handleAddComment}
@@ -329,7 +335,7 @@ export const CommentComposer = memo(function CommentComposer({
               )}
             </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">Cmd+Enter to submit</p>
+          <p className="text-xs text-muted-foreground mt-2">Cmd+Enter to submit</p>
         </>
       )}
     </div>

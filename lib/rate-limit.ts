@@ -36,6 +36,11 @@ export const RATE_LIMIT_CONFIGS: Record<string, RateLimitConfig> = {
     'create-video':     { windowMs: 60 * 1000, maxRequests: 10 },       // 10 per minute
     'create-version':   { windowMs: 60 * 1000, maxRequests: 10 },       // 10 per minute
     'create-workspace': { windowMs: 60 * 60 * 1000, maxRequests: 10 },  // 10 per hour
+    'asset-list':       { windowMs: 60 * 1000, maxRequests: 120 },      // 120 per minute
+    'asset-create':     { windowMs: 60 * 1000, maxRequests: 20 },       // 20 per minute
+    'asset-delete':     { windowMs: 60 * 1000, maxRequests: 20 },       // 20 per minute
+    'asset-download':   { windowMs: 60 * 1000, maxRequests: 10 },       // 10 per minute
+    'asset-bunny-init': { windowMs: 60 * 1000, maxRequests: 10 },       // 10 per minute
 
     // Watch progress — allow frequent updates but prevent abuse
     'watch-progress':   { windowMs: 60 * 1000, maxRequests: 30 },       // 30 per minute (pausing + periodic + visibility changes)
