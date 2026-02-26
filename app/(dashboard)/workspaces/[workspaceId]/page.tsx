@@ -16,6 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { VideoDragDropUploader } from '@/components/video-drag-drop-uploader';
 
 function VisibilityIcon({ visibility }: { visibility: string }) {
   switch (visibility) {
@@ -102,6 +103,10 @@ export default async function WorkspacePage({ params, searchParams }: WorkspaceP
 
   return (
     <div className="px-6 lg:px-8 py-8 w-full">
+      <VideoDragDropUploader
+        workspaceId={workspaceId}
+        canUpload={isAdmin && workspace._count.projects > 0}
+      />
       {/* Back & Header */}
       <div className="mb-6">
         <Link

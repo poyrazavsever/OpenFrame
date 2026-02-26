@@ -1,6 +1,7 @@
 'use client';
 
 import { ProjectFilter } from './project-filter';
+import { VideoDragDropUploader } from '@/components/video-drag-drop-uploader';
 
 interface SerializedProject {
   id: string;
@@ -19,11 +20,19 @@ interface DashboardClientProps {
   workspaces: { id: string; name: string }[];
   totalPages: number;
   canCreateProjects: boolean;
+  canUploadVideos: boolean;
 }
 
-export function DashboardClient({ serializedProjects, workspaces, totalPages, canCreateProjects }: DashboardClientProps) {
+export function DashboardClient({
+  serializedProjects,
+  workspaces,
+  totalPages,
+  canCreateProjects,
+  canUploadVideos,
+}: DashboardClientProps) {
   return (
     <div className="px-6 lg:px-8 py-8 w-full">
+      <VideoDragDropUploader canUpload={canUploadVideos} />
       <ProjectFilter
         projects={serializedProjects}
         workspaces={workspaces}

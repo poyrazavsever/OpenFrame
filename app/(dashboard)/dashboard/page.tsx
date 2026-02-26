@@ -49,15 +49,35 @@ export default async function DashboardPage({
         distinct: ['workspaceId']
     });
 
-    const creatableWorkspaces = await db.workspace.count({
-        where: {
-            OR: [
-                { ownerId: session.user.id },
-                { members: { some: { userId: session.user.id, role: 'ADMIN' } } },
-            ],
-        },
-    });
+    const [creatableWorkspaces, editableProject] = await Promise.all([
+        db.workspace.count({
+            where: {
+                OR: [
+                    { ownerId: session.user.id },
+                    { members: { some: { userId: session.user.id, role: 'ADMIN' } } },
+                ],
+            },
+        }),
+        db.project.findFirst({
+            where: {
+                OR: [
+                    { ownerId: session.user.id },
+                    { members: { some: { userId: session.user.id, role: 'ADMIN' } } },
+                    {
+                        workspace: {
+                            OR: [
+                                { ownerId: session.user.id },
+                                { members: { some: { userId: session.user.id, role: 'ADMIN' } } },
+                            ],
+                        },
+                    },
+                ],
+            },
+            select: { id: true },
+        }),
+    ]);
     const canCreateProjects = creatableWorkspaces > 0;
+    const canUploadVideos = Boolean(editableProject);
 
     const workspaceMap = new Map<string, string>();
     for (const project of accessibleProjects) {
@@ -116,6 +136,7 @@ export default async function DashboardPage({
             workspaces={workspaces}
             totalPages={totalPages}
             canCreateProjects={canCreateProjects}
+            canUploadVideos={canUploadVideos}
         />
     );
 }

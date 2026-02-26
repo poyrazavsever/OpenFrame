@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { VideoCard } from '@/components/video-card';
+import { VideoDragDropUploader } from '@/components/video-drag-drop-uploader';
 
 interface SerializedVideo {
   id: string;
@@ -93,6 +94,12 @@ export function ProjectContentClient({
 
   return (
     <>
+      <VideoDragDropUploader
+        fixedProjectId={projectId}
+        fixedProjectName={project.name}
+        canUpload={canEdit}
+      />
+
       {/* Project Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>

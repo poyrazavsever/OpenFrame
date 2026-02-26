@@ -218,7 +218,6 @@ export function VideoCard({ video, projectId, canManage, onDeleted }: VideoCardP
                   <Play className="h-12 w-12 text-white" fill="white" />
                 </div>
               )}
-              <Badge className="absolute bottom-2 right-2 bg-black/70">{video.duration}</Badge>
             </div>
           </Link>
 
@@ -231,6 +230,7 @@ export function VideoCard({ video, projectId, canManage, onDeleted }: VideoCardP
                     <Badge variant="secondary" className="text-xs">
                       v{video.currentVersion}
                     </Badge>
+                    <span className="text-xs">{video.duration}</span>
                   </span>
                   <span className="flex items-center gap-1">
                     <MessageSquare className="h-3.5 w-3.5" />
