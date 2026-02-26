@@ -16,7 +16,7 @@
 - Keep API and UI imports on `@/` aliases when available.
 
 ## Important locations
-- Custom SQL not managed by Prisma migrations: `prisma/migrations/*.sql` and runner `scripts/db-extras.ts`.
+- Custom SQL managed by Prisma migrations: `prisma/migrations/*/migration.sql`.
 - Shared API response helpers: `lib/api-response.ts`.
 - Auth + access-control helpers: `lib/auth.ts`.
 
