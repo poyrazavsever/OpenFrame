@@ -381,6 +381,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
   }, [videoDuration, activeVersion?.duration]);
 
   const selectedQualityLabel = useMemo(() => {
+    if (selectedQualityLevel === -2) return 'Original';
     if (selectedQualityLevel === -1) return 'Auto';
     return qualityOptions.find((option) => option.level === selectedQualityLevel)?.label ?? 'Auto';
   }, [qualityOptions, selectedQualityLevel]);
@@ -514,7 +515,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     ? `/projects/${propProjectId}`
     : (video?.projectId ? `/projects/${video.projectId}` : '/');
   const isBunnyVersion = activeVersion?.providerId === 'bunny';
-  const showBunnyProcessingOverlay = isBunnyVersion && bunnyPlaybackState === 'processing';
+  const showBunnyProcessingOverlay = isBunnyVersion && bunnyPlaybackState === 'processing' && !isReady;
   const showBunnyErrorOverlay = isBunnyVersion && bunnyPlaybackState === 'error';
 
   const confirmGuestName = useCallback(() => {
@@ -916,6 +917,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
             requests={approvalRequests}
             currentUserId={currentUserId}
             canRequestApproval={canRequestApproval}
+            onOpenApprovalRequest={handleOpenApprovalRequestDialog}
             isLoadingRequests={isLoadingApprovals}
             isSubmittingDecision={isSubmittingApprovalDecision}
             isCancelingRequest={isCancelingApprovalRequest}

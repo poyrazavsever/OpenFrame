@@ -896,6 +896,7 @@ function BunnyPanel({
     let isPlaying = false;
     let destroyed = false;
     let retryAttempt = 0;
+    let sourceMode: 'hls' | 'original' = 'hls';
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const clearRetryTimer = () => {
@@ -956,6 +957,7 @@ function BunnyPanel({
         videoEl.removeEventListener('pause', onPause);
         videoEl.removeEventListener('ended', onEnded);
         videoEl.removeEventListener('loadedmetadata', onLoadedMetadata);
+        videoEl.removeEventListener('error', onError);
         if (hlsRef.current) {
           try { hlsRef.current.destroy(); } catch { /* ignore */ }
           hlsRef.current = null;
@@ -978,18 +980,45 @@ function BunnyPanel({
     const onPlay = () => { isPlaying = true; };
     const onPause = () => { isPlaying = false; };
     const onEnded = () => { isPlaying = false; };
+    const hlsUrl = `https://${BUNNY_PULL_ZONE_HOSTNAME}/${version.videoId}/playlist.m3u8`;
+    const originalUrl = `https://${BUNNY_PULL_ZONE_HOSTNAME}/${version.videoId}/original`;
+    const activateOriginalFallback = (): void => {
+      sourceMode = 'original';
+      clearRetryTimer();
+      if (hlsRef.current) {
+        try { hlsRef.current.destroy(); } catch { /* ignore */ }
+        hlsRef.current = null;
+      }
+      videoEl.src = getRetryUrl(originalUrl);
+      videoEl.load();
+    };
+    const onError = () => {
+      if (destroyed) return;
+      if (videoEl.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        return;
+      }
+      if (sourceMode === 'hls') {
+        activateOriginalFallback();
+        return;
+      }
+      scheduleRetry(() => {
+        videoEl.src = getRetryUrl(originalUrl);
+        videoEl.load();
+      });
+    };
 
     videoEl.addEventListener('loadedmetadata', onLoadedMetadata);
     videoEl.addEventListener('timeupdate', onTimeUpdate);
     videoEl.addEventListener('play', onPlay);
     videoEl.addEventListener('pause', onPause);
     videoEl.addEventListener('ended', onEnded);
-
-    const hlsUrl = `https://${BUNNY_PULL_ZONE_HOSTNAME}/${version.videoId}/playlist.m3u8`;
+    videoEl.addEventListener('error', onError);
     if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      sourceMode = 'hls';
       videoEl.src = hlsUrl;
       videoEl.load();
     } else if (Hls.isSupported()) {
+      sourceMode = 'hls';
       const hls = new Hls();
       hlsRef.current = hls;
       hls.attachMedia(videoEl);
@@ -1023,7 +1052,16 @@ function BunnyPanel({
           && videoEl.readyState < HTMLMediaElement.HAVE_METADATA;
 
         if (isLikelyProcessing || isNetworkPreMetadataProcessing || isUnknownPreMetadataProcessing) {
+          if (sourceMode === 'hls') {
+            activateOriginalFallback();
+            return;
+          }
           scheduleRetry(() => {
+            if (sourceMode === 'original') {
+              videoEl.src = getRetryUrl(originalUrl);
+              videoEl.load();
+              return;
+            }
             const retryUrl = getRetryUrl(hlsUrl);
             try {
               hls.stopLoad();

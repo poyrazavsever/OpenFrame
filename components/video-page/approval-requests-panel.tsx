@@ -20,6 +20,7 @@ interface ApprovalRequestsPanelProps {
   requests: ApprovalRequest[];
   currentUserId: string | null;
   canRequestApproval: boolean;
+  onOpenApprovalRequest: () => void;
   isLoadingRequests: boolean;
   isSubmittingDecision: boolean;
   isCancelingRequest: boolean;
@@ -58,6 +59,7 @@ export function ApprovalRequestsPanel({
   requests,
   currentUserId,
   canRequestApproval,
+  onOpenApprovalRequest,
   isLoadingRequests,
   isSubmittingDecision,
   isCancelingRequest,
@@ -102,9 +104,19 @@ export function ApprovalRequestsPanel({
         <div className="px-4 pb-4 space-y-3 overflow-y-auto">
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">{requests.length} request(s)</p>
-            <Button size="sm" variant="ghost" onClick={onRefresh} disabled={isLoadingRequests}>
-              {isLoadingRequests ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onOpenApprovalRequest}
+                disabled={!canRequestApproval || !!pendingRequest}
+              >
+                Request Approval
+              </Button>
+              <Button size="sm" variant="ghost" onClick={onRefresh} disabled={isLoadingRequests}>
+                {isLoadingRequests ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+              </Button>
+            </div>
           </div>
 
           {error ? (

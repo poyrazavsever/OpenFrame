@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
-import { DownloadMenuItems } from '@/components/video-page/download-controls';
+import { DownloadControls } from '@/components/video-page/download-controls';
 import { VersionDeleteDialog } from '@/components/video-page/version-delete-dialog';
 import { VersionActionsDialog } from '@/components/video-page/version-actions-dialog';
 import type { BunnyDownloadPreference, DownloadTarget, Version } from '@/components/video-page/types';
@@ -205,6 +205,16 @@ export const VideoPageHeader = memo(function VideoPageHeader({
               ) : null}
             </Button>
 
+            <div className="hidden sm:block">
+              <DownloadControls
+                activeVersion={activeVersion}
+                videoCanDownload={videoCanDownload}
+                isDownloading={isDownloadingVideo}
+                activeDownloadTarget={activeDownloadTarget}
+                onDownload={onDownload}
+              />
+            </div>
+
             {versions.length >= 2 && (
               <Button variant="outline" size="sm" onClick={onOpenCompare} className="hidden sm:inline-flex">
                 <GitCompareArrows className="h-4 w-4 mr-1" />
@@ -265,14 +275,6 @@ export const VideoPageHeader = memo(function VideoPageHeader({
                       <ShieldCheck className="h-4 w-4 mr-2" />
                       Request Approval
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DownloadMenuItems
-                      activeVersion={activeVersion}
-                      videoCanDownload={videoCanDownload}
-                      isDownloading={isDownloadingVideo}
-                      activeDownloadTarget={activeDownloadTarget}
-                      onDownload={onDownload}
-                    />
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

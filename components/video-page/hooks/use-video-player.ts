@@ -64,6 +64,9 @@ export function useVideoPlayer({
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [qualityOptions, setQualityOptions] = useState<BunnyQualityOption[]>([]);
   const [selectedQualityLevel, setSelectedQualityLevel] = useState<number>(-1);
+  const [bunnySourcePreference, setBunnySourcePreference] = useState<'auto' | 'original'>('auto');
+  const pendingHlsQualityRef = useRef<number | null>(null);
+  const previousVersionKeyRef = useRef<string | null>(null);
   const [isBunnyPortraitSource, setIsBunnyPortraitSource] = useState(false);
   const [bunnyPortraitFrameWidth, setBunnyPortraitFrameWidth] = useState<number>(0);
   const [cursorIdle, setCursorIdle] = useState(false);
@@ -145,6 +148,10 @@ export function useVideoPlayer({
     if (isYoutube && !isApiLoaded) return;
     if (!isYoutube && !isBunny) return;
 
+    const currentVersionKey = `${activeProviderId ?? 'none'}:${activeVersionId ?? 'none'}`;
+    const versionChanged = previousVersionKeyRef.current !== currentVersionKey;
+    previousVersionKeyRef.current = currentVersionKey;
+
     setIsReady(false);
     setBunnyPlaybackState('none');
     setCurrentTime(0);
@@ -152,8 +159,8 @@ export function useVideoPlayer({
     setIsPlaying(false);
     setIsMuted(false);
     setPlaybackSpeed(1);
-    setQualityOptions([]);
-    setSelectedQualityLevel(-1);
+    setQualityOptions((prev) => (versionChanged ? [] : prev));
+    setSelectedQualityLevel(bunnySourcePreference === 'original' ? -2 : -1);
     setIsBunnyPortraitSource(false);
 
     if (playerRef.current) {
@@ -204,11 +211,16 @@ export function useVideoPlayer({
         const videoEl = videoRef.current;
         if (!videoEl) return;
 
+        const bunnyOriginalUrl = embedUrl.includes('/playlist.m3u8')
+          ? embedUrl.replace('/playlist.m3u8', '/original')
+          : '';
+
         let cachedDuration = 0;
         let destroyed = false;
         let retryAttempt = 0;
         let usingHlsJs = false;
         let hlsInstance: Hls | null = null;
+        let sourceMode: 'hls' | 'original' = bunnySourcePreference === 'original' ? 'original' : 'hls';
         const clearRetryTimer = () => {
           if (bunnyRetryTimerRef.current) {
             clearTimeout(bunnyRetryTimerRef.current);
@@ -223,18 +235,23 @@ export function useVideoPlayer({
             }
           }, 3000);
         };
-        const getRetryUrl = () => {
+        const getRetryUrl = (baseUrl: string) => {
           retryAttempt += 1;
-          const separator = embedUrl.includes('?') ? '&' : '?';
-          return `${embedUrl}${separator}retry=${Date.now()}-${retryAttempt}`;
+          const separator = baseUrl.includes('?') ? '&' : '?';
+          return `${baseUrl}${separator}retry=${Date.now()}-${retryAttempt}`;
         };
         const retryNativeLoad = () => {
-          videoEl.src = getRetryUrl();
+          videoEl.src = getRetryUrl(embedUrl);
+          videoEl.load();
+        };
+        const retryOriginalLoad = () => {
+          if (!bunnyOriginalUrl) return;
+          videoEl.src = getRetryUrl(bunnyOriginalUrl);
           videoEl.load();
         };
         const retryHlsLoad = () => {
           if (destroyed || !hlsInstance) return;
-          const retryUrl = getRetryUrl();
+          const retryUrl = getRetryUrl(embedUrl);
           try {
             hlsInstance.stopLoad();
           } catch {
@@ -242,6 +259,21 @@ export function useVideoPlayer({
           }
           hlsInstance.loadSource(retryUrl);
           hlsInstance.startLoad(-1);
+        };
+        const activateOriginalFallback = (): boolean => {
+          if (!bunnyOriginalUrl) return false;
+          sourceMode = 'original';
+          usingHlsJs = false;
+          clearRetryTimer();
+          if (hlsRef.current) {
+            try { hlsRef.current.destroy(); } catch { /* ignore */ }
+            hlsRef.current = null;
+          }
+          hlsInstance = null;
+          setBunnyPlaybackState('processing');
+          setIsReady(false);
+          retryOriginalLoad();
+          return true;
         };
 
         const syncDuration = () => {
@@ -265,7 +297,7 @@ export function useVideoPlayer({
         const onLoadedMetadata = () => {
           if (destroyed) return;
           clearRetryTimer();
-          setBunnyPlaybackState('none');
+          setBunnyPlaybackState(sourceMode === 'original' ? 'processing' : 'none');
           if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
             setIsBunnyPortraitSource(videoEl.videoHeight > videoEl.videoWidth);
           }
@@ -275,7 +307,9 @@ export function useVideoPlayer({
 
         const onPlay = () => {
           setIsPlaying(true);
-          setBunnyPlaybackState('none');
+          if (sourceMode !== 'original') {
+            setBunnyPlaybackState('none');
+          }
           syncDuration();
         };
 
@@ -305,9 +339,16 @@ export function useVideoPlayer({
             setBunnyPlaybackState('error');
             return;
           }
+          if (sourceMode === 'hls') {
+            if (activateOriginalFallback()) return;
+            setIsReady(false);
+            setBunnyPlaybackState('processing');
+            scheduleRetry(retryNativeLoad);
+            return;
+          }
           setIsReady(false);
           setBunnyPlaybackState('processing');
-          scheduleRetry(retryNativeLoad);
+          scheduleRetry(retryOriginalLoad);
         };
 
         videoEl.addEventListener('loadedmetadata', onLoadedMetadata);
@@ -322,13 +363,36 @@ export function useVideoPlayer({
             level: index,
             label: formatBunnyQualityLabel(level, index),
           })));
+          const pendingQuality = pendingHlsQualityRef.current;
+          pendingHlsQualityRef.current = null;
+
+          if (pendingQuality === null || pendingQuality === -1) {
+            if (hlsInstance) {
+              hlsInstance.currentLevel = -1;
+              hlsInstance.nextLevel = -1;
+            }
+            setSelectedQualityLevel(-1);
+            return;
+          }
+
+          if (pendingQuality >= 0 && pendingQuality < levels.length && hlsInstance) {
+            hlsInstance.currentLevel = pendingQuality;
+            hlsInstance.nextLevel = pendingQuality;
+            setSelectedQualityLevel(pendingQuality);
+            return;
+          }
+
           setSelectedQualityLevel(-1);
         };
 
-        if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        if (sourceMode === 'original' && bunnyOriginalUrl) {
+          retryOriginalLoad();
+        } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+          sourceMode = 'hls';
           videoEl.src = embedUrl;
           videoEl.load();
         } else if (Hls.isSupported()) {
+          sourceMode = 'hls';
           usingHlsJs = true;
           const hls = new Hls();
           hlsInstance = hls;
@@ -371,6 +435,9 @@ export function useVideoPlayer({
               && !data.type
               && videoEl.readyState < HTMLMediaElement.HAVE_METADATA;
             if (isLikelyProcessing || isNetworkPreMetadataProcessing || isUnknownPreMetadataProcessing) {
+              if (activateOriginalFallback()) {
+                return;
+              }
               setIsReady(false);
               setBunnyPlaybackState('processing');
               scheduleRetry(retryHlsLoad);
@@ -465,7 +532,7 @@ export function useVideoPlayer({
         bunnyRetryTimerRef.current = null;
       }
     };
-  }, [activeProviderId, activeVersionId, embedUrl, isApiLoaded, canInitializePlayer, formatBunnyQualityLabel, hlsRef, iframeRef, playerRef, scheduleWatchProgressSaveRef, videoRef]);
+  }, [activeProviderId, activeVersionId, embedUrl, isApiLoaded, canInitializePlayer, formatBunnyQualityLabel, bunnySourcePreference, hlsRef, iframeRef, playerRef, scheduleWatchProgressSaveRef, videoRef]);
 
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -527,24 +594,6 @@ export function useVideoPlayer({
 
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        return;
-      }
-      const isBunnyBlocked = activeVersion?.providerId === 'bunny' && bunnyPlaybackState !== 'none';
-      const isPlaybackControlKey = [
-        'Space',
-        'KeyK',
-        'ArrowLeft',
-        'ArrowRight',
-        'ArrowUp',
-        'ArrowDown',
-        'Comma',
-        'Period',
-        'KeyM',
-        'KeyJ',
-        'KeyL',
-      ].includes(e.code);
-      if (isBunnyBlocked && isPlaybackControlKey) {
-        e.preventDefault();
         return;
       }
 
@@ -660,17 +709,16 @@ export function useVideoPlayer({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeVersion?.providerId, bunnyPlaybackState, isPlaying, currentTime, duration, isMuted, playbackSpeed, speedOptions, toggleFullscreen, playerRef]);
+  }, [isPlaying, currentTime, duration, isMuted, playbackSpeed, speedOptions, toggleFullscreen, playerRef]);
 
   const handlePlayPause = useCallback(() => {
-    if (activeVersion?.providerId === 'bunny' && bunnyPlaybackState !== 'none') return;
     if (!playerRef.current) return;
     if (isPlaying) {
       playerRef.current.pauseVideo();
     } else {
       playerRef.current.playVideo();
     }
-  }, [activeVersion?.providerId, bunnyPlaybackState, isPlaying, playerRef]);
+  }, [isPlaying, playerRef]);
 
   const handleSeekToTimestamp = useCallback((timestamp: number, annotation?: string | null) => {
     setCurrentTime(timestamp);
@@ -728,8 +776,21 @@ export function useVideoPlayer({
   );
 
   const handleQualityChange = useCallback((level: number) => {
+    if (level === -2) {
+      pendingHlsQualityRef.current = null;
+      setBunnySourcePreference('original');
+      setSelectedQualityLevel(-2);
+      return;
+    }
+
+    pendingHlsQualityRef.current = level;
+    setBunnySourcePreference('auto');
+
     const hls = hlsRef.current;
-    if (!hls) return;
+    if (!hls) {
+      setSelectedQualityLevel(level === -1 ? -1 : level);
+      return;
+    }
 
     if (level === -1) {
       hls.currentLevel = -1;

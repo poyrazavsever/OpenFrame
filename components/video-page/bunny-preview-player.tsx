@@ -55,6 +55,10 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
     if (!providerVideoId) return null;
     return `https://${resolveBunnyCdnHostname()}/${providerVideoId}/playlist.m3u8`;
   }, [providerVideoId]);
+  const originalUrl = useMemo(() => {
+    if (!providerVideoId) return null;
+    return `https://${resolveBunnyCdnHostname()}/${providerVideoId}/original`;
+  }, [providerVideoId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -62,6 +66,7 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
 
     let destroyed = false;
     let usingHlsJs = false;
+    let sourceMode: 'hls' | 'original' = 'hls';
 
     const clearRetry = () => {
       if (retryTimerRef.current) {
@@ -77,10 +82,22 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
       }, 3000);
     };
 
-    const getRetryUrl = () => {
+    const getRetryUrl = (baseUrl: string) => {
       retryAttemptRef.current += 1;
-      const separator = playlistUrl.includes('?') ? '&' : '?';
-      return `${playlistUrl}${separator}retry=${Date.now()}-${retryAttemptRef.current}`;
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      return `${baseUrl}${separator}retry=${Date.now()}-${retryAttemptRef.current}`;
+    };
+    const loadOriginal = (): boolean => {
+      if (!originalUrl) return false;
+      sourceMode = 'original';
+      usingHlsJs = false;
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      video.src = getRetryUrl(originalUrl);
+      video.load();
+      return true;
     };
 
     const onLoadedMetadata = () => {
@@ -101,12 +118,18 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
         return;
       }
       setLoadError(false);
+      if (sourceMode === 'hls' && loadOriginal()) {
+        return;
+      }
       scheduleRetry(() => {
-        if (usingHlsJs && hlsRef.current) {
-          hlsRef.current.loadSource(getRetryUrl());
+        if (sourceMode === 'original' && originalUrl) {
+          video.src = getRetryUrl(originalUrl);
+          video.load();
+        } else if (usingHlsJs && hlsRef.current) {
+          hlsRef.current.loadSource(getRetryUrl(playlistUrl));
           hlsRef.current.startLoad(-1);
         } else {
-          video.src = getRetryUrl();
+          video.src = getRetryUrl(playlistUrl);
           video.load();
         }
       });
@@ -124,6 +147,7 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
       const hls = new Hls();
       hlsRef.current = hls;
       usingHlsJs = true;
+      sourceMode = 'hls';
       hls.attachMedia(video);
       hls.on(Hls.Events.MEDIA_ATTACHED, () => {
         if (!destroyed) hls.loadSource(playlistUrl);
@@ -131,10 +155,12 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (destroyed) return;
         if (data.fatal && video.readyState < HTMLMediaElement.HAVE_METADATA) {
-          scheduleRetry(() => hls.loadSource(getRetryUrl()));
+          if (loadOriginal()) return;
+          scheduleRetry(() => hls.loadSource(getRetryUrl(playlistUrl)));
         }
       });
     } else if (canPlayNativeHls) {
+      sourceMode = 'hls';
       video.src = playlistUrl;
       video.load();
     } else {
@@ -164,7 +190,7 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
       setDuration(0);
       setIsReady(false);
     };
-  }, [playlistUrl]);
+  }, [playlistUrl, originalUrl]);
 
   const seekTo = (event: React.MouseEvent<HTMLDivElement>) => {
     const video = videoRef.current;
@@ -177,17 +203,17 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
 
   const togglePlayPause = useCallback(() => {
     const video = videoRef.current;
-    if (!video || !isReady || isProcessing) return;
+    if (!video || !isReady) return;
     if (video.paused) void video.play();
     else video.pause();
-  }, [isProcessing, isReady]);
+  }, [isReady]);
 
   const seekBy = useCallback((seconds: number) => {
     const video = videoRef.current;
-    if (!video || !isReady || isProcessing || !duration) return;
+    if (!video || !isReady || !duration) return;
     video.currentTime = Math.min(duration, Math.max(0, (video.currentTime || 0) + seconds));
     setCurrentTime(video.currentTime);
-  }, [duration, isProcessing, isReady]);
+  }, [duration, isReady]);
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -208,11 +234,11 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
       <div className="relative flex-1 min-h-0 flex items-center justify-center bg-black" onClick={togglePlayPause}>
         <video ref={videoRef} className="w-full h-full object-contain bg-black" playsInline preload="metadata" />
 
-        {(isProcessing || (!isReady && !loadError)) && (
+        {(!isReady && !loadError) && (
           <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
             <div className="flex items-center gap-2 text-white text-sm">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Processing...
+              {isProcessing ? 'Processing...' : 'Loading...'}
             </div>
           </div>
         )}
@@ -230,7 +256,7 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-white hover:text-white"
-            disabled={!isReady || isProcessing}
+            disabled={!isReady}
             onClick={togglePlayPause}
           >
             {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
@@ -251,7 +277,7 @@ export const BunnyPreviewPlayer = forwardRef<BunnyPreviewPlayerHandle, BunnyPrev
         <div
           className={cn(
             'relative h-6 rounded bg-white/10 select-none',
-            isReady && !isProcessing ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+            isReady ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
           )}
           onClick={seekTo}
         >

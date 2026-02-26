@@ -376,6 +376,12 @@ export const PlayerCore = memo(function PlayerCore({
                   >
                     Auto
                   </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => handleQualityChange(-2)}
+                    className={cn(selectedQualityLevel === -2 && 'font-bold text-primary')}
+                  >
+                    Original
+                  </DropdownMenuItem>
                   {qualityOptions.length > 0 && <DropdownMenuSeparator />}
                   {qualityOptions.map((option) => (
                     <DropdownMenuItem
