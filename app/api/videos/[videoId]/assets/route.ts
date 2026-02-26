@@ -1,6 +1,6 @@
 import { HeadObjectCommand } from '@aws-sdk/client-s3';
 import { VideoAssetProvider } from '@prisma/client';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { parseVideoUrl, getThumbnailUrl } from '@/lib/video-providers';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { rateLimit } from '@/lib/rate-limit';
@@ -95,6 +95,10 @@ function shapeAssetForViewer(asset: AssetWithViewerFields, canExposeSource: bool
   };
 }
 
+function normalizeEtag(value: string): string {
+  return value.trim().replace(/^W\//, '');
+}
+
 function parsePaginationParam(value: string | null, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
@@ -172,6 +176,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const offset = requestedOffset;
     const includeDeleteMetadata = context.canUploadAssets;
 
+    const assetsRevision = await db.videoAsset.aggregate({
+      where: { videoId },
+      _count: { id: true },
+      _max: { updatedAt: true },
+    });
+    const etag = `"assets:${videoId}:${limit}:${offset}:${includeDeleteMetadata ? 1 : 0}:${context.canDownloadAssets ? 1 : 0}:${assetsRevision._count.id}:${assetsRevision._max.updatedAt?.getTime() ?? 0}"`;
+    const ifNoneMatch = request.headers.get('if-none-match');
+    if (ifNoneMatch) {
+      const matches = ifNoneMatch
+        .split(',')
+        .map(normalizeEtag)
+        .includes(normalizeEtag(etag));
+      if (matches) {
+        const notModified = new NextResponse(null, { status: 304 });
+        notModified.headers.set('ETag', etag);
+        return withCacheControl(notModified, 'private, no-cache');
+      }
+    }
+
     const assets = await db.videoAsset.findMany({
       where: { videoId },
       skip: offset,
@@ -214,6 +237,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       canUploadAssets: context.canUploadAssets,
       canDownloadAssets: context.canDownloadAssets,
     });
+    response.headers.set('ETag', etag);
     return withCacheControl(response, 'private, no-cache');
   } catch (error) {
     console.error('Error fetching video assets:', error);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { VideoAsset } from '@/components/video-page/types';
 
@@ -60,25 +60,40 @@ export function useVideoAssets({
   const [hasMoreAssets, setHasMoreAssets] = useState(false);
   const [nextAssetsOffset, setNextAssetsOffset] = useState(0);
   const [isLoadingMoreAssets, setIsLoadingMoreAssets] = useState(false);
+  const assetsEtagRef = useRef<string | null>(null);
+  const isMutatingRef = useRef(false);
 
-  const fetchAssets = useCallback(async () => {
-    setIsLoadingAssets(true);
+  const fetchAssets = useCallback(async (options?: { useEtag?: boolean; silent?: boolean }) => {
+    const useEtag = options?.useEtag ?? false;
+    const silent = options?.silent ?? false;
+    if (!silent) setIsLoadingAssets(true);
     try {
-      const res = await fetch(`/api/videos/${videoId}/assets?limit=${ASSET_PAGE_SIZE}&offset=0`, { cache: 'no-store' });
+      const headers: HeadersInit = {};
+      if (useEtag && assetsEtagRef.current) {
+        headers['If-None-Match'] = assetsEtagRef.current;
+      }
+      const res = await fetch(`/api/videos/${videoId}/assets?limit=${ASSET_PAGE_SIZE}&offset=0`, { cache: 'no-store', headers });
+      if (res.status === 304) return;
       const payload = (await res.json().catch(() => null)) as AssetsListResponse | null;
       if (!res.ok) {
-        toast.error(payload?.error || 'Failed to fetch assets');
+        if (!silent) {
+          toast.error(payload?.error || 'Failed to fetch assets');
+        }
         return;
       }
+      const etag = res.headers.get('etag');
+      if (etag) assetsEtagRef.current = etag;
       const list = Array.isArray(payload?.data?.assets) ? payload.data.assets : [];
       const pagination = payload?.data?.pagination;
       setAssets(list);
       setHasMoreAssets(!!pagination?.hasMore);
       setNextAssetsOffset(typeof pagination?.nextOffset === 'number' ? pagination.nextOffset : 0);
     } catch {
-      toast.error('Failed to fetch assets');
+      if (!silent) {
+        toast.error('Failed to fetch assets');
+      }
     } finally {
-      setIsLoadingAssets(false);
+      if (!silent) setIsLoadingAssets(false);
     }
   }, [videoId]);
 
@@ -105,8 +120,29 @@ export function useVideoAssets({
   }, [hasMoreAssets, isLoadingMoreAssets, nextAssetsOffset, videoId]);
 
   useEffect(() => {
-    void fetchAssets();
+    void fetchAssets({ useEtag: true });
   }, [fetchAssets]);
+
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let isPageVisible = true;
+
+    const poll = async () => {
+      if (!isPageVisible || isMutatingRef.current || isLoadingMoreAssets) return;
+      await fetchAssets({ useEtag: true, silent: true });
+    };
+
+    intervalId = setInterval(poll, 10000);
+    const handleVisibilityChange = () => {
+      isPageVisible = document.visibilityState === 'visible';
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [fetchAssets, isLoadingMoreAssets]);
 
   const createAsset = useCallback(async (payload: CreateAssetPayload): Promise<VideoAsset | null> => {
     if (!canUploadAssets) {
@@ -115,6 +151,7 @@ export function useVideoAssets({
     }
 
     setIsCreatingAsset(true);
+    isMutatingRef.current = true;
     try {
       const res = await fetch(`/api/videos/${videoId}/assets`, {
         method: 'POST',
@@ -138,11 +175,13 @@ export function useVideoAssets({
       return null;
     } finally {
       setIsCreatingAsset(false);
+      isMutatingRef.current = false;
     }
   }, [canUploadAssets, videoId, isAuthenticated, guestName]);
 
   const deleteAsset = useCallback(async (assetId: string) => {
     setActiveDeleteAssetId(assetId);
+    isMutatingRef.current = true;
     try {
       const res = await fetch(`/api/videos/${videoId}/assets/${assetId}`, {
         method: 'DELETE',
@@ -161,6 +200,7 @@ export function useVideoAssets({
       return false;
     } finally {
       setActiveDeleteAssetId(null);
+      isMutatingRef.current = false;
     }
   }, [videoId]);
 
