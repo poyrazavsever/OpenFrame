@@ -9,6 +9,7 @@ import { getShareSessionFromRequest } from '@/lib/share-session';
 import { HeadObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { ensureGuestIdentityFromRequest, getGuestIdentityFromRequest, setGuestIdentityCookie } from '@/lib/guest-identity';
+import { extractImageFileNameFromProxyUrl, sanitizeAssetDisplayName } from '@/lib/video-assets';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
 const SAFE_IMAGE_PATH = /^\/api\/upload\/image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
@@ -184,7 +185,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             include: {
                 video: {
                     include: {
-                        project: true,
+                        project: {
+                            include: {
+                                workspace: {
+                                    select: {
+                                        ownerId: true,
+                                    },
+                                },
+                            },
+                        },
                     },
                 },
             },
@@ -266,34 +275,63 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         const guestIdentity = isGuest ? ensureGuestIdentityFromRequest(request) : null;
 
-        const comment = await db.comment.create({
-            data: {
-                content: content?.trim() || null,
-                timestamp: parsedTimestamp,
-                timestampEnd: timestampEnd ? parseFloat(timestampEnd) : null,
-                parentId: parentId || null,
-                voiceUrl: voiceUrl || null,
-                voiceDuration: voiceDuration || null,
-                imageUrl: imageUrl || null,
-                annotationData: annotationData || null,
-                authorId: session?.user?.id || null,
-                guestName: isGuest ? guestName : null,
-                guestEmail: isGuest ? guestEmail : null,
-                guestIdentityId: isGuest ? guestIdentity?.identityId ?? null : null,
-                tagId: tagId || null,
-                versionId,
-            },
-            include: {
-                author: { select: { id: true, name: true, image: true } },
-                tag: { select: { id: true, name: true, color: true } },
-                replies: {
-                    include: {
-                        author: { select: { id: true, name: true, image: true } },
-                        tag: { select: { id: true, name: true, color: true } },
+        // Use a transaction to create both comment and asset (if image is attached)
+        const result = await db.$transaction(async (tx) => {
+            const comment = await tx.comment.create({
+                data: {
+                    content: content?.trim() || null,
+                    timestamp: parsedTimestamp,
+                    timestampEnd: timestampEnd ? parseFloat(timestampEnd) : null,
+                    parentId: parentId || null,
+                    voiceUrl: voiceUrl || null,
+                    voiceDuration: voiceDuration || null,
+                    imageUrl: imageUrl || null,
+                    annotationData: annotationData || null,
+                    authorId: session?.user?.id || null,
+                    guestName: isGuest ? guestName : null,
+                    guestEmail: isGuest ? guestEmail : null,
+                    guestIdentityId: isGuest ? guestIdentity?.identityId ?? null : null,
+                    tagId: tagId || null,
+                    versionId,
+                },
+                include: {
+                    author: { select: { id: true, name: true, image: true } },
+                    tag: { select: { id: true, name: true, color: true } },
+                    replies: {
+                        include: {
+                            author: { select: { id: true, name: true, image: true } },
+                            tag: { select: { id: true, name: true, color: true } },
+                        },
                     },
                 },
-            },
+            });
+
+            // If an image was attached to the comment, also add it to the assets pane
+            if (imageUrl) {
+                const fileName = extractImageFileNameFromProxyUrl(imageUrl);
+                const displayName = sanitizeAssetDisplayName(null, fileName || 'Comment Image');
+                const safeGuestName = sanitizeAssetDisplayName(guestName, 'Guest').slice(0, 80);
+                
+                await tx.videoAsset.create({
+                    data: {
+                        videoId: version.video.id,
+                        kind: 'IMAGE',
+                        provider: 'R2_IMAGE',
+                        displayName,
+                        sourceUrl: imageUrl,
+                        thumbnailUrl: imageUrl,
+                        uploadedByUserId: session?.user?.id || null,
+                        uploadedByGuestIdentityId: isGuest ? guestIdentity?.identityId ?? null : null,
+                        uploadedByGuestName: isGuest ? safeGuestName : null,
+                        billedUserId: project.workspace.ownerId,
+                    },
+                });
+            }
+
+            return comment;
         });
+
+        const comment = result;
 
         // Notify project owner (fire-and-forget, skip self-notifications)
         const commentAuthorName = session?.user?.name || guestName || 'Someone';

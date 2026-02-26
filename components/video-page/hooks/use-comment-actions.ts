@@ -37,6 +37,7 @@ interface UseCommentActionsParams extends CommentActionsConfig {
   annotationCanvasRef: RefObject<AnnotationCanvasHandle | null>;
   editAnnotationCanvasRef: RefObject<AnnotationCanvasHandle | null>;
   fetchVersionComments: (versionId: string, useEtag: boolean) => Promise<void>;
+  fetchAssets: () => Promise<void>;
 }
 
 export function useCommentActions({
@@ -61,6 +62,7 @@ export function useCommentActions({
   annotationCanvasRef,
   editAnnotationCanvasRef,
   fetchVersionComments,
+  fetchAssets,
 }: UseCommentActionsParams) {
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
@@ -221,6 +223,11 @@ export function useCommentActions({
             ),
           };
         });
+        
+        // If an image was attached, refresh the assets list
+        if (imageData) {
+          void fetchAssets();
+        }
       } else {
         setVideo((prev) => {
           if (!prev) return prev;
@@ -274,6 +281,7 @@ export function useCommentActions({
     setIsAnnotating,
     setViewingAnnotation,
     setVideo,
+    fetchAssets,
   ]);
 
   const handleImageSelect = useCallback((e: ChangeEvent<HTMLInputElement>, isReply: boolean = false) => {
@@ -620,6 +628,11 @@ export function useCommentActions({
             ),
           };
         });
+        
+        // If an image was attached, refresh the assets list
+        if (submittedImageData) {
+          void fetchAssets();
+        }
       } else {
         setVideo((prev) => {
           if (!prev) return prev;
@@ -666,7 +679,7 @@ export function useCommentActions({
       setIsUploadingReplyImage(false);
       isMutatingRef.current = false;
     }
-  }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, normalizedGuestName, currentUserName, replyImageBlob, videoId, getGuestUploadToken, setVideo]);
+  }, [replyText, activeVersion, activeVersionId, comments, currentTime, isGuest, normalizedGuestName, currentUserName, replyImageBlob, videoId, getGuestUploadToken, setVideo, fetchAssets]);
 
   const startReplyRecording = useCallback(async () => {
     try {

@@ -10,7 +10,6 @@ export type BunnyDownloadSource = {
 
 const BUNNY_DOWNLOAD_FALLBACK_HEIGHTS = [2160, 1440, 1080, 720, 480, 360, 240];
 const BUNNY_ALLOWED_QUALITIES = new Set(BUNNY_DOWNLOAD_FALLBACK_HEIGHTS);
-const BUNNY_MAX_PROBE_CANDIDATES = 4;
 const BUNNY_REMOTE_FETCH_TIMEOUT_MS = 8 * 1000;
 const BUNNY_SOURCE_RESOLUTION_CACHE_TTL_MS = 60 * 1000;
 
@@ -88,16 +87,14 @@ async function resolveHighestBunnyMp4Url(videoId: string): Promise<string> {
     // Fall through to static fallback list.
   }
 
-  const candidateHeights = [...new Set([...playlistHeights, ...BUNNY_DOWNLOAD_FALLBACK_HEIGHTS])]
-    .slice(0, BUNNY_MAX_PROBE_CANDIDATES);
+  const candidateHeights = [...new Set([...playlistHeights, ...BUNNY_DOWNLOAD_FALLBACK_HEIGHTS])];
 
   for (const height of candidateHeights) {
     const candidateUrl = `https://${hostname}/${videoId}/play_${height}p.mp4`;
     if (await isRemoteFileAvailable(candidateUrl)) return candidateUrl;
   }
 
-  const fallbackHeight = candidateHeights[0] ?? 1080;
-  return `https://${hostname}/${videoId}/play_${fallbackHeight}p.mp4`;
+  return '';
 }
 
 async function resolveBunnyOriginalSource(videoId: string): Promise<BunnyDownloadSource | null> {

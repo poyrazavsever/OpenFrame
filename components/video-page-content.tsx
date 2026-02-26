@@ -154,6 +154,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     activeDownloadAssetId,
     hasMoreAssets,
     isLoadingMoreAssets,
+    fetchAssets,
     loadMoreAssets,
     createAsset,
     deleteAsset,
@@ -473,6 +474,7 @@ export function VideoPageContent({ mode, videoId, projectId: propProjectId }: Vi
     annotationCanvasRef,
     editAnnotationCanvasRef,
     fetchVersionComments,
+    fetchAssets,
   });
 
   const commentMarkers = useMemo<CommentMarker[]>(() => {
