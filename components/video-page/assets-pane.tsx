@@ -1,9 +1,9 @@
 'use client';
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as tus from 'tus-js-client';
 import { toast } from 'sonner';
-import { Download, FileVideo, Image as ImageIcon, Loader2, Play, UploadCloud, X, Youtube } from 'lucide-react';
+import { Download, FileVideo, Image as ImageIcon, Loader2, Mic, Pause, Play, Square, UploadCloud, Volume2, X, Youtube } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -20,7 +20,14 @@ import { BunnyPreviewPlayer, type BunnyPreviewPlayerHandle } from '@/components/
 import { AssetListSection } from '@/components/video-page/asset-list-section';
 import type { VideoAsset } from '@/components/video-page/types';
 import { extractPastedImageFile, validateImageFile } from '@/components/video-page/image-upload-utils';
+import { useCommentMedia } from '@/components/video-page/hooks/use-comment-media';
 import { resolvePublicBunnyCdnHostname } from '@/lib/bunny-cdn';
+import { cn } from '@/lib/utils';
+
+function formatTime(seconds: number): string {
+  const s = Math.floor(seconds);
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
 
 interface AssetsPaneProps {
   videoId: string;
@@ -31,9 +38,9 @@ interface AssetsPaneProps {
   activeDownloadAssetId: string | null;
   canUploadAssets: boolean;
   canDownloadAssets: boolean;
-  getGuestUploadToken: (intent: 'image') => Promise<string | null>;
+  getGuestUploadToken: (intent: 'image' | 'audio') => Promise<string | null>;
   createAsset: (payload: {
-    provider: 'R2_IMAGE' | 'YOUTUBE' | 'BUNNY';
+    provider: 'R2_IMAGE' | 'YOUTUBE' | 'BUNNY' | 'R2_AUDIO';
     displayName?: string;
     sourceUrl: string;
     providerVideoId?: string;
@@ -68,7 +75,7 @@ export const AssetsPane = memo(function AssetsPane({
   highlightedAssetId,
   onHighlightedAssetHandled,
 }: AssetsPaneProps) {
-  const [uploadTab, setUploadTab] = useState<'image' | 'youtube' | 'bunny'>('image');
+  const [uploadTab, setUploadTab] = useState<'image' | 'youtube' | 'bunny' | 'voice'>('image');
   const [imageTitle, setImageTitle] = useState('');
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -90,6 +97,25 @@ export const AssetsPane = memo(function AssetsPane({
   const youtubePreviewStateRef = useRef({ currentTime: 0, isPlaying: false, isMuted: false });
   const imageInputRef = useRef<HTMLInputElement>(null);
   const bunnyInputRef = useRef<HTMLInputElement>(null);
+
+  // Voice recording state
+  const [voiceTitle, setVoiceTitle] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
+  const [pendingAudioFile, setPendingAudioFile] = useState<File | null>(null);
+  const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Drag-drop state
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  // Audio playback for asset preview dialog and recording preview
+  const { playingVoiceId, voiceProgress, voiceCurrentTime, voicePlaybackRate, playVoice, stopVoice, toggleVoiceSpeed } = useCommentMedia();
 
   const sortedAssets = useMemo(() => {
     return [...assets].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
@@ -227,7 +253,7 @@ export const AssetsPane = memo(function AssetsPane({
     setBunnyProcessingByAssetId((prev) => (prev[selectedAsset.id] ? prev : { ...prev, [selectedAsset.id]: true }));
   }, [bunnyReadyByAssetId, selectedAsset]);
 
-  const handleImageUpload = async (file: File) => {
+  const handleImageUpload = useCallback(async (file: File) => {
     if (!file) return;
 
     const imageError = validateImageFile(file);
@@ -266,7 +292,7 @@ export const AssetsPane = memo(function AssetsPane({
       console.error('Failed to upload image asset:', error);
       toast.error('Failed to upload image');
     }
-  };
+  }, [videoId, getGuestUploadToken, createAsset, imageTitle]);
 
   const handleImageFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -307,9 +333,7 @@ export const AssetsPane = memo(function AssetsPane({
     }
   };
 
-  const handleBunnyUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleBunnyFileUpload = useCallback(async (file: File) => {
     if (!file.type.startsWith('video/')) {
       toast.error('Please select a video file');
       return;
@@ -403,6 +427,12 @@ export const AssetsPane = memo(function AssetsPane({
       setIsUploadingBunny(false);
       setBunnyProgress(0);
     }
+  }, [videoId, bunnyTitle, bunnyCdnHostname, createAsset]);
+
+  const handleBunnyUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await handleBunnyFileUpload(file);
   };
 
   const handleBunnyThumbnailError = (assetId: string) => {
@@ -425,7 +455,161 @@ export const AssetsPane = memo(function AssetsPane({
     });
   };
 
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        setAudioBlob(blob);
+        setAudioBlobUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(blob);
+        });
+        stream.getTracks().forEach((t) => t.stop());
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start(100);
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000);
+    } catch {
+      toast.error('Could not access microphone');
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  }, []);
+
+  const cancelRecording = useCallback(() => {
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+    setRecordingTime(0);
+    setAudioBlob(null);
+    setAudioBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+    setPendingAudioFile(null);
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  }, []);
+
+  const handleVoiceUpload = useCallback(async () => {
+    const uploadSource = pendingAudioFile ?? audioBlob;
+    if (!uploadSource) return;
+    setIsUploadingVoice(true);
+    try {
+      const formData = new FormData();
+      if (pendingAudioFile) {
+        formData.append('audio', pendingAudioFile);
+      } else {
+        formData.append('audio', audioBlob!, 'recording.webm');
+      }
+      formData.append('videoId', videoId);
+      const guestUploadToken = await getGuestUploadToken('audio');
+      if (guestUploadToken) formData.append('uploadToken', guestUploadToken);
+
+      const uploadRes = await fetch('/api/upload/audio', {
+        method: 'POST',
+        body: formData,
+      });
+      const uploadPayload = (await uploadRes.json().catch(() => null)) as { data?: { url?: string }; error?: string } | null;
+      const uploadedUrl = uploadPayload?.data?.url;
+      if (!uploadRes.ok || !uploadedUrl) {
+        toast.error(uploadPayload?.error || 'Failed to upload voice recording');
+        return;
+      }
+
+      const fallbackName = pendingAudioFile
+        ? pendingAudioFile.name.replace(/\.[^/.]+$/, '')
+        : 'Voice Recording';
+      await createAsset({
+        provider: 'R2_AUDIO',
+        sourceUrl: uploadedUrl,
+        displayName: voiceTitle.trim() || fallbackName,
+      });
+      setVoiceTitle('');
+      setAudioBlob(null);
+      setAudioBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+      setPendingAudioFile(null);
+    } catch {
+      toast.error('Failed to upload voice recording');
+    } finally {
+      setIsUploadingVoice(false);
+    }
+  }, [pendingAudioFile, audioBlob, videoId, getGuestUploadToken, createAsset, voiceTitle]);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (!canUploadAssets) return;
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true);
+  }, [canUploadAssets]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current === 0) setIsDragOver(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    if (!canUploadAssets) return;
+
+    const file = Array.from(e.dataTransfer.files)[0];
+    if (!file) return;
+
+    if (file.type.startsWith('image/')) {
+      const imageError = validateImageFile(file);
+      if (imageError) { toast.error(imageError); return; }
+      // Stage the file so the user can optionally set a name before uploading
+      setUploadTab('image');
+      setPendingImageFile(file);
+    } else if (file.type.startsWith('video/')) {
+      // Videos upload immediately (large files, no staging)
+      setUploadTab('bunny');
+      await handleBunnyFileUpload(file);
+    } else if (file.type.startsWith('audio/')) {
+      // Stage the file so the user can optionally set a name before uploading
+      setUploadTab('voice');
+      setPendingAudioFile(file);
+    } else {
+      toast.error('Unsupported file type. Drop an image, video, or audio file.');
+    }
+  }, [canUploadAssets, handleBunnyFileUpload]);
+
   const renderAssetPreview = (asset: VideoAsset) => {
+    if (asset.kind === 'AUDIO') {
+      return (
+        <div className="h-24 w-36 rounded border bg-muted flex flex-col items-center justify-center gap-1">
+          <Volume2 className="h-6 w-6 text-muted-foreground" />
+          <span className="text-[10px] text-muted-foreground font-medium">Voice Recording</span>
+        </div>
+      );
+    }
+
     if (asset.kind === 'IMAGE') {
       const imageSrc = asset.thumbnailUrl || asset.sourceUrl;
       return (
@@ -501,6 +685,10 @@ export const AssetsPane = memo(function AssetsPane({
       setPreviewImageTitle(asset.displayName);
       return;
     }
+    if (asset.kind === 'AUDIO') {
+      setSelectedAsset(asset);
+      return;
+    }
     if (asset.provider === 'BUNNY' && !bunnyReadyByAssetId[asset.id]) {
       setBunnyProcessingByAssetId((prev) => (prev[asset.id] ? prev : { ...prev, [asset.id]: true }));
     }
@@ -513,7 +701,14 @@ export const AssetsPane = memo(function AssetsPane({
     : false;
 
   return (
-    <div className="space-y-4" onPaste={handleImagePaste}>
+    <div
+      className="space-y-4"
+      onPaste={handleImagePaste}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-medium">Assets</span>
@@ -522,12 +717,19 @@ export const AssetsPane = memo(function AssetsPane({
       </div>
 
       {canUploadAssets ? (
-        <div className="rounded-lg border p-3 space-y-3">
-          <Tabs value={uploadTab} onValueChange={(value) => setUploadTab(value as 'image' | 'youtube' | 'bunny')}>
-            <TabsList className="grid w-full grid-cols-3">
+        <div className={cn('rounded-lg border p-3 space-y-3 relative transition-colors', isDragOver && 'border-primary bg-primary/5')}>
+          {isDragOver && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg bg-primary/10 border-2 border-dashed border-primary pointer-events-none">
+              <UploadCloud className="h-8 w-8 text-primary" />
+              <span className="text-sm font-medium text-primary">Drop to upload</span>
+            </div>
+          )}
+          <Tabs value={uploadTab} onValueChange={(value) => setUploadTab(value as 'image' | 'youtube' | 'bunny' | 'voice')}>
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="image">Image</TabsTrigger>
               <TabsTrigger value="youtube">YouTube</TabsTrigger>
               <TabsTrigger value="bunny">Video</TabsTrigger>
+              <TabsTrigger value="voice">Voice</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -636,6 +838,111 @@ export const AssetsPane = memo(function AssetsPane({
               )}
             </div>
           )}
+
+          {uploadTab === 'voice' && (
+            <div className="space-y-2">
+              <Input
+                placeholder="Optional name for this recording"
+                value={voiceTitle}
+                onChange={(e) => setVoiceTitle(e.target.value)}
+                disabled={isRecording || isUploadingVoice}
+              />
+              {pendingAudioFile ? (
+                <div className="space-y-2">
+                  <div className="rounded-md border px-2 py-1.5 text-xs flex items-center justify-between gap-2">
+                    <span className="truncate">Attached: {pendingAudioFile.name}</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2"
+                      onClick={() => setPendingAudioFile(null)}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <Button
+                    className="w-full"
+                    disabled={isUploadingVoice || isCreatingAsset}
+                    onClick={handleVoiceUpload}
+                  >
+                    {isUploadingVoice ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <UploadCloud className="h-4 w-4 mr-2" />}
+                    {isUploadingVoice ? 'Uploading...' : 'Upload File'}
+                  </Button>
+                </div>
+              ) : isRecording ? (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                    </span>
+                    <span className="text-red-500 font-medium">Recording</span>
+                    <span className="ml-auto tabular-nums text-muted-foreground">
+                      {String(Math.floor(recordingTime / 60)).padStart(2, '0')}:{String(recordingTime % 60).padStart(2, '0')}
+                    </span>
+                  </div>
+                  <Button size="icon" variant="outline" className="h-9 w-9 shrink-0" title="Stop recording" onClick={stopRecording}>
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" title="Cancel recording" onClick={cancelRecording}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : audioBlob ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 p-2 bg-muted rounded">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => audioBlobUrl && playVoice('recording-preview', audioBlobUrl, recordingTime)}
+                    >
+                      {playingVoiceId === 'recording-preview' ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                    </Button>
+                    <div className="flex-1 h-2 bg-primary/20 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full"
+                        style={{ width: playingVoiceId === 'recording-preview' ? `${voiceProgress}%` : '0%' }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                      {playingVoiceId === 'recording-preview'
+                        ? `${formatTime(voiceCurrentTime)} / ${formatTime(recordingTime)}`
+                        : formatTime(recordingTime)}
+                    </span>
+                    {playingVoiceId === 'recording-preview' && (
+                      <button
+                        onClick={toggleVoiceSpeed}
+                        className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                      >
+                        {voicePlaybackRate}x
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1"
+                      disabled={isUploadingVoice || isCreatingAsset}
+                      onClick={handleVoiceUpload}
+                    >
+                      {isUploadingVoice ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <UploadCloud className="h-4 w-4 mr-2" />}
+                      {isUploadingVoice ? 'Uploading...' : 'Upload Recording'}
+                    </Button>
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" title="Discard and re-record" onClick={cancelRecording}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button variant="outline" className="w-full" onClick={startRecording} disabled={isUploadingVoice || isCreatingAsset}>
+                  <Mic className="h-4 w-4 mr-2" />
+                  Start Recording
+                </Button>
+              )}
+              <p className="text-xs text-muted-foreground">Or drag an audio file anywhere onto this panel.</p>
+            </div>
+          )}
         </div>
       ) : (
         <div className="rounded-lg border p-3 text-xs text-muted-foreground">
@@ -671,6 +978,43 @@ export const AssetsPane = memo(function AssetsPane({
           setPreviewImageTitle(null);
         }}
       />
+
+      <Dialog open={selectedAsset?.kind === 'AUDIO'} onOpenChange={(open) => { if (!open) { stopVoice(); setSelectedAsset(null); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogTitle>{selectedAsset?.displayName || 'Voice Recording'}</DialogTitle>
+          {selectedAsset?.sourceUrl ? (
+            <div className="flex items-center gap-2 p-2 bg-muted rounded">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 shrink-0"
+                onClick={() => selectedAsset.sourceUrl && playVoice(selectedAsset.id, selectedAsset.sourceUrl)}
+              >
+                {playingVoiceId === selectedAsset?.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              </Button>
+              <div className="flex-1 h-2 bg-primary/20 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full"
+                  style={{ width: playingVoiceId === selectedAsset?.id ? `${voiceProgress}%` : '0%' }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                {playingVoiceId === selectedAsset?.id ? formatTime(voiceCurrentTime) : '00:00'}
+              </span>
+              {playingVoiceId === selectedAsset?.id && (
+                <button
+                  onClick={toggleVoiceSpeed}
+                  className="text-[10px] font-bold px-1 py-0.5 rounded bg-muted hover:bg-muted-foreground/20 tabular-nums shrink-0"
+                >
+                  {voicePlaybackRate}x
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Audio preview unavailable.</p>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={selectedAsset?.kind === 'VIDEO'} onOpenChange={(open) => !open && setSelectedAsset(null)}>
         <DialogContent

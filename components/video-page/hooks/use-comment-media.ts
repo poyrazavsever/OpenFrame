@@ -86,6 +86,17 @@ export function useCommentMedia() {
     void audio.play();
   }, [playingVoiceId, voicePlaybackRate, startVoiceTracking, stopVoiceTracking]);
 
+  const stopVoice = useCallback(() => {
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current = null;
+    }
+    stopVoiceTracking();
+    setPlayingVoiceId(null);
+    setVoiceProgress(0);
+    setVoiceCurrentTime(0);
+  }, [stopVoiceTracking]);
+
   const toggleVoiceSpeed = useCallback(() => {
     setVoicePlaybackRate((prev) => {
       const next = prev === 1 ? 2 : 1;
@@ -112,6 +123,7 @@ export function useCommentMedia() {
     voiceCurrentTime,
     voicePlaybackRate,
     playVoice,
+    stopVoice,
     toggleVoiceSpeed,
   };
 }

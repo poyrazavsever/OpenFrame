@@ -257,7 +257,7 @@ export async function getCachedUserMediaStorage(): Promise<Record<string, { tota
         const snapshot = await getR2StorageSnapshot();
         const seenKeys = new Set<string>();
 
-        const [mediaComments, mediaAssets] = await Promise.all([
+        const [mediaComments, imageAssets, audioAssets] = await Promise.all([
             db.comment.findMany({
                 where: { OR: [{ voiceUrl: { not: null } }, { imageUrl: { not: null } }] },
                 select: {
@@ -282,6 +282,13 @@ export async function getCachedUserMediaStorage(): Promise<Record<string, { tota
             }),
             db.videoAsset.findMany({
                 where: { provider: 'R2_IMAGE' },
+                select: {
+                    sourceUrl: true,
+                    billedUserId: true,
+                },
+            }),
+            db.videoAsset.findMany({
+                where: { provider: 'R2_AUDIO' },
                 select: {
                     sourceUrl: true,
                     billedUserId: true,
@@ -324,7 +331,7 @@ export async function getCachedUserMediaStorage(): Promise<Record<string, { tota
             }
         }
 
-        for (const asset of mediaAssets) {
+        for (const asset of imageAssets) {
             const billedUserId = asset.billedUserId;
             if (!billedUserId) continue;
             if (!userStorage[billedUserId]) {
@@ -341,6 +348,26 @@ export async function getCachedUserMediaStorage(): Promise<Record<string, { tota
 
             const size = snapshot.fileSizes.get(r2Key) || 0;
             userStorage[billedUserId].image += size;
+            userStorage[billedUserId].total += size;
+        }
+
+        for (const asset of audioAssets) {
+            const billedUserId = asset.billedUserId;
+            if (!billedUserId) continue;
+            if (!userStorage[billedUserId]) {
+                userStorage[billedUserId] = { total: 0, voice: 0, image: 0 };
+            }
+
+            const keyParts = asset.sourceUrl.split('/');
+            const filename = keyParts[keyParts.length - 1];
+            if (!filename) continue;
+            const r2Key = `voice/${filename}`;
+            const dedupeKey = `${billedUserId}:${r2Key}`;
+            if (seenKeys.has(dedupeKey)) continue;
+            seenKeys.add(dedupeKey);
+
+            const size = snapshot.fileSizes.get(r2Key) || 0;
+            userStorage[billedUserId].voice += size;
             userStorage[billedUserId].total += size;
         }
     } catch (err) {

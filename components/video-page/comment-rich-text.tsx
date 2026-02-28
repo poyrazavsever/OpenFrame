@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Image as ImageIcon, Video } from 'lucide-react';
+import { Image as ImageIcon, Video, Volume2 } from 'lucide-react';
 import type { VideoAsset } from '@/components/video-page/types';
 
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
@@ -50,7 +50,7 @@ export function CommentRichText({ text, onAssetMentionClick, assets = [] }: Comm
     const assetId = match[2] || '';
     const matchedAsset = assets.find((asset) => asset.id === assetId);
     const label = matchedAsset?.displayName || fallbackLabel;
-    const isVideoAsset = matchedAsset?.kind === 'VIDEO';
+    const assetKind = matchedAsset?.kind;
 
     nodes.push(
       <button
@@ -65,12 +65,14 @@ export function CommentRichText({ text, onAssetMentionClick, assets = [] }: Comm
       >
         <span
           className={
-            isVideoAsset
+            assetKind === 'VIDEO'
               ? 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-violet-500/25 text-violet-200'
+              : assetKind === 'AUDIO'
+              ? 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-blue-500/25 text-blue-200'
               : 'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-emerald-500/25 text-emerald-200'
           }
         >
-          {isVideoAsset ? <Video className="h-2.5 w-2.5" /> : <ImageIcon className="h-2.5 w-2.5" />}
+          {assetKind === 'VIDEO' ? <Video className="h-2.5 w-2.5" /> : assetKind === 'AUDIO' ? <Volume2 className="h-2.5 w-2.5" /> : <ImageIcon className="h-2.5 w-2.5" />}
         </span>
         <span className="truncate max-w-[190px] sm:max-w-[240px]">
           @{label}

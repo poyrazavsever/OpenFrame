@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, type ReactNode } from 'react';
-import { Download, Image as ImageIcon, Loader2, Play, Trash2 } from 'lucide-react';
+import { Download, Image as ImageIcon, Loader2, Play, Trash2, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -103,15 +103,15 @@ export const AssetListSection = memo(function AssetListSection({
                   size="icon"
                   variant="outline"
                   className="h-7 w-7"
-                  title={asset.kind === 'VIDEO' ? 'Play video' : 'View image'}
-                  aria-label={asset.kind === 'VIDEO' ? 'Play video' : 'View image'}
+                  title={asset.kind === 'VIDEO' ? 'Play video' : asset.kind === 'AUDIO' ? 'Play recording' : 'View image'}
+                  aria-label={asset.kind === 'VIDEO' ? 'Play video' : asset.kind === 'AUDIO' ? 'Play recording' : 'View image'}
                   onClick={() => onViewAsset(asset)}
                 >
-                  {asset.kind === 'IMAGE' ? <ImageIcon className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                  {asset.kind === 'IMAGE' ? <ImageIcon className="h-3 w-3" /> : asset.kind === 'AUDIO' ? <Volume2 className="h-3 w-3" /> : <Play className="h-3 w-3" />}
                 </Button>
 
                 {canDownloadAssets && asset.provider !== 'YOUTUBE' && (
-                  asset.provider === 'BUNNY' ? (
+                  asset.provider === 'BUNNY' && asset.kind !== 'AUDIO' ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button

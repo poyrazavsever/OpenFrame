@@ -7,7 +7,7 @@ import type { VideoAsset } from '@/components/video-page/types';
 type BunnyDownloadPreference = 'original' | 'compressed';
 
 type CreateAssetPayload = {
-  provider: 'R2_IMAGE' | 'YOUTUBE' | 'BUNNY';
+  provider: 'R2_IMAGE' | 'YOUTUBE' | 'BUNNY' | 'R2_AUDIO';
   displayName?: string;
   sourceUrl: string;
   providerVideoId?: string;
@@ -240,7 +240,7 @@ export function useVideoAssets({
     }
   }, [canDownloadAssets, videoId]);
 
-  const getGuestUploadToken = useCallback(async (intent: 'image') => {
+  const getGuestUploadToken = useCallback(async (intent: 'image' | 'audio') => {
     if (isAuthenticated) return null;
     const response = await fetch(`/api/watch/${videoId}/upload-token`, {
       method: 'POST',

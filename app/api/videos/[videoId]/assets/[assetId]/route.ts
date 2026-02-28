@@ -42,6 +42,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     let shouldDeleteImageObject = false;
+    let shouldDeleteAudioObject = false;
     await db.$transaction(async (tx) => {
       await tx.videoAsset.delete({ where: { id: asset.id } });
 
@@ -52,10 +53,21 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         ]);
         shouldDeleteImageObject = assetReferenceCount === 0 && commentReferenceCount === 0;
       }
+
+      if (asset.provider === VideoAssetProvider.R2_AUDIO) {
+        const [assetReferenceCount, commentReferenceCount] = await Promise.all([
+          tx.videoAsset.count({ where: { sourceUrl: asset.sourceUrl } }),
+          tx.comment.count({ where: { voiceUrl: asset.sourceUrl } }),
+        ]);
+        shouldDeleteAudioObject = assetReferenceCount === 0 && commentReferenceCount === 0;
+      }
     });
 
     let r2CleanupResult: Awaited<ReturnType<typeof deleteMediaFilesBestEffort>> | undefined;
     if (asset.provider === VideoAssetProvider.R2_IMAGE && shouldDeleteImageObject) {
+      r2CleanupResult = await deleteMediaFilesBestEffort([asset.sourceUrl]);
+    }
+    if (asset.provider === VideoAssetProvider.R2_AUDIO && shouldDeleteAudioObject) {
       r2CleanupResult = await deleteMediaFilesBestEffort([asset.sourceUrl]);
     }
 

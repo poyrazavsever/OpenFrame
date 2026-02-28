@@ -7,18 +7,30 @@ import { fetchWithTimeout, resolveBunnyDownloadSource } from '@/lib/bunny-downlo
 import { db } from '@/lib/db';
 import {
   extractImageFileNameFromProxyUrl,
+  extractAudioFileNameFromProxyUrl,
   getVideoAssetAccessContext,
 } from '@/lib/video-assets';
 
 type RouteParams = { params: Promise<{ videoId: string; assetId: string }> };
 type BunnySourcePreference = 'auto' | 'original' | 'compressed';
 
-const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+const IMAGE_CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
   webp: 'image/webp',
   gif: 'image/gif',
+};
+
+const AUDIO_CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+  webm: 'audio/webm',
+  ogg: 'audio/ogg',
+  opus: 'audio/ogg',
+  mp4: 'audio/mp4',
+  m4a: 'audio/mp4',
+  mpeg: 'audio/mpeg',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
 };
 const BUNNY_ALLOWED_QUALITIES = new Set([2160, 1440, 1080, 720, 480, 360, 240]);
 
@@ -47,7 +59,7 @@ function buildContentDisposition(fileNameWithExt: string): string {
 
 function imageContentTypeFromFileName(fileName: string): string {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  return CONTENT_TYPE_BY_EXTENSION[ext] || 'application/octet-stream';
+  return IMAGE_CONTENT_TYPE_BY_EXTENSION[ext] || 'application/octet-stream';
 }
 
 // GET /api/videos/[videoId]/assets/[assetId]/download
@@ -98,6 +110,29 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           'Content-Security-Policy': "default-src 'none'; sandbox",
         },
         internalErrorMessage: 'Failed to retrieve image',
+      });
+    }
+
+    if (asset.provider === VideoAssetProvider.R2_AUDIO) {
+      const fileName = extractAudioFileNameFromProxyUrl(asset.sourceUrl);
+      if (!fileName) return apiErrors.badRequest('Invalid audio asset URL');
+      const key = `voice/${fileName}`;
+      const ext = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')) : '.webm';
+      const downloadName = `${sanitizeFileName(asset.displayName)}${ext}`;
+      const contentDisposition = buildContentDisposition(downloadName);
+      const extKey = ext.replace('.', '');
+      const contentType = AUDIO_CONTENT_TYPE_BY_EXTENSION[extKey] || 'audio/webm';
+
+      return proxyR2MediaObject({
+        request,
+        key,
+        fallbackContentType: contentType,
+        cacheControl: 'private, no-store',
+        extraHeaders: {
+          'Content-Disposition': contentDisposition,
+          'X-Content-Type-Options': 'nosniff',
+        },
+        internalErrorMessage: 'Failed to retrieve audio',
       });
     }
 

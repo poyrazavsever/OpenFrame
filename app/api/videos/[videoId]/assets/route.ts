@@ -15,9 +15,12 @@ import { resolveServerBunnyCdnHostname } from '@/lib/bunny-cdn';
 import {
   SAFE_BUNNY_VIDEO_ID,
   SAFE_IMAGE_PROXY_PATH,
+  SAFE_AUDIO_PROXY_PATH,
   canDeleteAssetForViewer,
   extractImageFileNameFromProxyUrl,
   extractImageKeyFromProxyUrl,
+  extractAudioKeyFromProxyUrl,
+  extractAudioFileNameFromProxyUrl,
   getVideoAssetAccessContext,
   sanitizeAssetDisplayName,
 } from '@/lib/video-assets';
@@ -32,7 +35,7 @@ const YOUTUBE_TITLE_CACHE_TTL_MS = 5 * 60 * 1000;
 type AssetWithViewerFields = {
   id: string;
   videoId: string;
-  kind: 'IMAGE' | 'VIDEO';
+  kind: 'IMAGE' | 'VIDEO' | 'AUDIO';
   provider: VideoAssetProvider;
   displayName: string;
   sourceUrl: string;
@@ -159,6 +162,22 @@ async function isFreshImageAttachment(url: string): Promise<boolean> {
   }
 }
 
+async function isFreshAudioAttachment(url: string): Promise<boolean> {
+  const key = extractAudioKeyFromProxyUrl(url);
+  if (!key) return false;
+
+  try {
+    const head = await r2Client.send(new HeadObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+    }));
+    if (!head.LastModified) return false;
+    return Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
 // GET /api/videos/[videoId]/assets
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
@@ -225,7 +244,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const response = successResponse({
       assets: pagedAssets.map((asset) => shapeAssetForViewer(
         asset,
-        context.canDownloadAssets,
+        // R2_AUDIO proxy URLs have no auth gate — expose them to any viewer so guests can preview audio
+        context.canDownloadAssets || (asset.provider === VideoAssetProvider.R2_AUDIO && context.hasViewAccess),
         includeDeleteMetadata ? canDeleteAssetForViewer(asset, context) : false
       )),
       pagination: {
@@ -259,7 +279,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const body = await request.json().catch(() => null);
     const provider = typeof body?.provider === 'string' ? body.provider.trim().toUpperCase() : '';
 
-    if (provider !== VideoAssetProvider.R2_IMAGE && provider !== VideoAssetProvider.YOUTUBE && provider !== VideoAssetProvider.BUNNY) {
+    if (
+      provider !== VideoAssetProvider.R2_IMAGE &&
+      provider !== VideoAssetProvider.YOUTUBE &&
+      provider !== VideoAssetProvider.BUNNY &&
+      provider !== VideoAssetProvider.R2_AUDIO
+    ) {
       return apiErrors.badRequest('Invalid provider');
     }
 
@@ -271,7 +296,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     let sourceUrl = '';
     let providerVideoId: string | null = null;
     let thumbnailUrl: string | null = null;
-    let kind: 'IMAGE' | 'VIDEO' = 'IMAGE';
+    let kind: 'IMAGE' | 'VIDEO' | 'AUDIO' = 'IMAGE';
 
     if (provider === VideoAssetProvider.R2_IMAGE) {
       sourceUrl = typeof body?.sourceUrl === 'string' ? body.sourceUrl.trim() : '';
@@ -286,6 +311,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       displayName = sanitizeAssetDisplayName(requestedDisplayName, fileName || 'Image');
       thumbnailUrl = sourceUrl;
       kind = 'IMAGE';
+    }
+
+    if (provider === VideoAssetProvider.R2_AUDIO) {
+      sourceUrl = typeof body?.sourceUrl === 'string' ? body.sourceUrl.trim() : '';
+      if (!SAFE_AUDIO_PROXY_PATH.test(sourceUrl)) {
+        return apiErrors.badRequest('Audio URL must reference an uploaded audio file');
+      }
+      if (!(await isFreshAudioAttachment(sourceUrl))) {
+        return apiErrors.badRequest('Audio upload expired. Please upload again.');
+      }
+
+      const fileName = extractAudioFileNameFromProxyUrl(sourceUrl);
+      displayName = sanitizeAssetDisplayName(requestedDisplayName, fileName || 'Voice Recording');
+      kind = 'AUDIO';
     }
 
     if (provider === VideoAssetProvider.YOUTUBE) {

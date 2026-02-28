@@ -10,6 +10,7 @@ const IMAGE_PROXY_PREFIX = '/api/upload/image/';
 const AUDIO_PROXY_PREFIX = '/api/upload/audio/';
 
 export const SAFE_IMAGE_PROXY_PATH = /^\/api\/upload\/image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+export const SAFE_AUDIO_PROXY_PATH = /^\/api\/upload\/audio\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 export const SAFE_BUNNY_VIDEO_ID = /^[A-Za-z0-9_-]{8,128}$/;
 
 export type VideoAssetAccessContext = {
@@ -58,6 +59,19 @@ export function extractImageKeyFromProxyUrl(url: string): string | null {
 export function extractImageFileNameFromProxyUrl(url: string): string | null {
   if (!SAFE_IMAGE_PROXY_PATH.test(url)) return null;
   const filename = url.slice(IMAGE_PROXY_PREFIX.length);
+  return filename || null;
+}
+
+export function extractAudioKeyFromProxyUrl(url: string): string | null {
+  if (!SAFE_AUDIO_PROXY_PATH.test(url)) return null;
+  const filename = url.slice(AUDIO_PROXY_PREFIX.length);
+  if (!filename) return null;
+  return `voice/${filename}`;
+}
+
+export function extractAudioFileNameFromProxyUrl(url: string): string | null {
+  if (!SAFE_AUDIO_PROXY_PATH.test(url)) return null;
+  const filename = url.slice(AUDIO_PROXY_PREFIX.length);
   return filename || null;
 }
 
