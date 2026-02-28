@@ -68,7 +68,7 @@ function ToggleButton({
             type="button"
             onClick={onToggle}
             className={cn(
-                'flex items-center justify-between w-full p-3 rounded-lg border transition-colors text-left',
+                'flex items-center justify-between w-full px-3 py-2 rounded-lg border transition-colors text-left',
                 enabled ? 'border-primary/50 bg-primary/5' : 'border-border hover:bg-accent/50'
             )}
         >
@@ -431,8 +431,10 @@ function StepNotifications({ onFinish }: { onFinish: () => Promise<void> }) {
     const [emailEnabled, setEmailEnabled] = useState(false);
     const [events, setEvents] = useState({
         onNewVideo: true,
+        onNewVersion: true,
         onNewComment: true,
         onNewReply: true,
+        onApprovalEvents: true,
     });
 
     const handleSave = async () => {
@@ -447,10 +449,10 @@ function StepNotifications({ onFinish }: { onFinish: () => Promise<void> }) {
                     telegramBotToken: null,
                     telegramChatId: null,
                     onNewVideo: events.onNewVideo,
-                    onNewVersion: true,
+                    onNewVersion: events.onNewVersion,
                     onNewComment: events.onNewComment,
                     onNewReply: events.onNewReply,
-                    onApprovalEvents: true,
+                    onApprovalEvents: events.onApprovalEvents,
                     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
                 }),
             });
@@ -461,19 +463,19 @@ function StepNotifications({ onFinish }: { onFinish: () => Promise<void> }) {
     };
 
     return (
-        <div className="space-y-7">
-            <div className="text-center space-y-3">
-                <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-                    <Bell className="h-8 w-8 text-primary" />
+        <div className="space-y-5">
+            <div className="text-center space-y-2">
+                <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-2">
+                    <Bell className="h-6 w-6 text-primary" />
                 </div>
-                <h2 className="text-2xl font-bold tracking-tight">Notification preferences</h2>
-                <p className="text-base text-muted-foreground">
+                <h2 className="text-xl font-bold tracking-tight">Notification preferences</h2>
+                <p className="text-sm text-muted-foreground">
                     Choose when you want to be notified. Email and Telegram are both supported — you can configure Telegram anytime in Settings.
                 </p>
             </div>
 
-            <div className="space-y-4">
-                <div className="space-y-2.5">
+            <div className="space-y-3">
+                <div className="space-y-2">
                     <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                         <Mail className="h-4 w-4" />
                         Channels
@@ -486,7 +488,7 @@ function StepNotifications({ onFinish }: { onFinish: () => Promise<void> }) {
                     />
                 </div>
 
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                     <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                         <Bell className="h-4 w-4" />
                         Events
@@ -496,6 +498,12 @@ function StepNotifications({ onFinish }: { onFinish: () => Promise<void> }) {
                         onToggle={() => setEvents((e) => ({ ...e, onNewVideo: !e.onNewVideo }))}
                         label="New Video Added"
                         description="When a new video is added to one of your projects"
+                    />
+                    <ToggleButton
+                        enabled={events.onNewVersion}
+                        onToggle={() => setEvents((e) => ({ ...e, onNewVersion: !e.onNewVersion }))}
+                        label="New Version Added"
+                        description="When a new version is added to an existing video"
                     />
                     <ToggleButton
                         enabled={events.onNewComment}
@@ -509,10 +517,16 @@ function StepNotifications({ onFinish }: { onFinish: () => Promise<void> }) {
                         label="New Reply"
                         description="When someone replies to a comment thread"
                     />
+                    <ToggleButton
+                        enabled={events.onApprovalEvents}
+                        onToggle={() => setEvents((e) => ({ ...e, onApprovalEvents: !e.onApprovalEvents }))}
+                        label="Approval Workflow"
+                        description="When approval requests are created, responded to, or finalized"
+                    />
                 </div>
             </div>
 
-            <div className="flex flex-col gap-2 pt-1">
+            <div className="flex flex-col gap-2">
                 <Button onClick={handleSave} className="w-full h-11" disabled={isSaving}>
                     {isSaving ? (
                         <>
