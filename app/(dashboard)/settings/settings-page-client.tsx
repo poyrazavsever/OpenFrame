@@ -21,7 +21,6 @@ import {
 import { cn } from '@/lib/utils';
 
 interface NotificationSettings {
-  telegramBotToken: string | null;
   telegramChatId: string | null;
   telegramEnabled: boolean;
   emailEnabled: boolean;
@@ -80,7 +79,6 @@ function ToggleButton({
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<NotificationSettings>({
-    telegramBotToken: null,
     telegramChatId: null,
     telegramEnabled: false,
     emailEnabled: false,
@@ -96,8 +94,7 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Form state for Telegram fields (separate from saved settings for editing)
-  const [telegramToken, setTelegramToken] = useState('');
+  // Form state for Telegram chat ID (separate from saved settings for editing)
   const [telegramChatId, setTelegramChatId] = useState('');
 
   useEffect(() => {
@@ -107,7 +104,6 @@ export default function SettingsPage() {
         if (res.ok) {
           const data = await res.json();
           setSettings(data.data);
-          setTelegramToken(data.data.telegramBotToken || '');
           setTelegramChatId(data.data.telegramChatId || '');
         }
       } catch {
@@ -132,7 +128,6 @@ export default function SettingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...settings,
-          telegramBotToken: telegramToken || null,
           telegramChatId: telegramChatId || null,
         }),
       });
@@ -150,7 +145,7 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
-  }, [settings, telegramToken, telegramChatId, showMessage]);
+  }, [settings, telegramChatId, showMessage]);
 
   const handleTest = useCallback(
     async (channel: 'telegram' | 'email') => {
@@ -161,7 +156,6 @@ export default function SettingsPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             channel,
-            telegramBotToken: telegramToken,
             telegramChatId,
           }),
         });
@@ -177,7 +171,7 @@ export default function SettingsPage() {
         setTesting(null);
       }
     },
-    [telegramToken, telegramChatId, showMessage]
+    [telegramChatId, showMessage]
   );
 
   if (loading) {
@@ -309,49 +303,65 @@ export default function SettingsPage() {
             </Badge>
           </div>
           <CardDescription>
-            Get instant notifications via a Telegram bot
+            Get instant notifications via Telegram
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-3">
-            <div>
-              <Label htmlFor="telegram-token">Bot Token</Label>
-              <Input
-                id="telegram-token"
-                type="password"
-                placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-                value={telegramToken}
-                onChange={(e) => setTelegramToken(e.target.value)}
-                className="mt-1 font-mono text-sm"
-              />
-            </div>
-            <div>
-              <Label htmlFor="telegram-chat-id">Chat ID</Label>
-              <Input
-                id="telegram-chat-id"
-                placeholder="-1001234567890"
-                value={telegramChatId}
-                onChange={(e) => setTelegramChatId(e.target.value)}
-                className="mt-1 font-mono text-sm"
-              />
-            </div>
+          <div className="rounded-md border bg-muted/40 p-3 space-y-2 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Setup instructions</p>
+            <ol className="space-y-1.5 list-decimal list-inside">
+              <li>
+                Message{' '}
+                <a
+                  href="https://t.me/UserInfeBot"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline underline-offset-2"
+                >
+                  @UserInfeBot
+                </a>
+                {' '}on Telegram and send <code className="bg-muted px-1 rounded text-xs">/start</code> to get your Chat ID
+              </li>
+              <li>
+                Start{' '}
+                <a
+                  href="https://t.me/openframe_bot"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline underline-offset-2"
+                >
+                  @openframe_bot
+                </a>
+                {' '}and send <code className="bg-muted px-1 rounded text-xs">/start</code> so it can message you
+              </li>
+              <li>Paste your Chat ID below and enable notifications</li>
+            </ol>
           </div>
 
-          <div className="flex items-center gap-2">
-            <ToggleButton
-              enabled={settings.telegramEnabled}
-              onToggle={() =>
-                setSettings((s) => ({ ...s, telegramEnabled: !s.telegramEnabled }))
-              }
-              label="Enable Telegram notifications"
+          <div>
+            <Label htmlFor="telegram-chat-id">Your Chat ID</Label>
+            <Input
+              id="telegram-chat-id"
+              placeholder="123456789"
+              value={telegramChatId}
+              onChange={(e) => setTelegramChatId(e.target.value)}
+              className="mt-1 font-mono text-sm"
             />
           </div>
+
+          <ToggleButton
+            enabled={settings.telegramEnabled}
+            onToggle={() =>
+              setSettings((s) => ({ ...s, telegramEnabled: !s.telegramEnabled }))
+            }
+            label="Enable Telegram notifications"
+          />
 
           <Button
             variant="outline"
             size="sm"
             onClick={() => handleTest('telegram')}
-            disabled={!telegramToken || !telegramChatId || testing === 'telegram'}
+            disabled={!telegramChatId || testing === 'telegram'}
           >
             {testing === 'telegram' ? (
               <Loader2 className="h-4 w-4 animate-spin mr-2" />

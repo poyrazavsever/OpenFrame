@@ -456,10 +456,11 @@ export async function notifyUsers(userIds: string[], event: NotificationEvent): 
             const promises: Promise<boolean>[] = [];
             const tz = settings.timezone || 'UTC';
 
-            if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+            const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+            if (settings.telegramEnabled && telegramBotToken && settings.telegramChatId) {
                 const msg = formatTelegramMessage(event, tz);
                 promises.push(sendTelegram(
-                    settings.telegramBotToken,
+                    telegramBotToken,
                     settings.telegramChatId,
                     msg.text,
                     msg.buttonLabel,

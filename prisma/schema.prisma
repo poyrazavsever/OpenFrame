@@ -610,8 +610,7 @@ model NotificationSetting {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Telegram webhook
-  telegramBotToken  String?   // Bot token from @BotFather
-  telegramChatId    String?   // Chat/group ID to send messages to
+  telegramChatId    String?   // Chat ID to send messages to (bot token is in TELEGRAM_BOT_TOKEN env var)
   telegramEnabled   Boolean   @default(false)
 
   // Email notifications (uses account email by default)

@@ -21,7 +21,6 @@ export async function GET() {
         // Return defaults if no settings exist yet
         const response = successResponse(
             settings ?? {
-                telegramBotToken: null,
                 telegramChatId: null,
                 telegramEnabled: false,
                 emailEnabled: false,
@@ -54,7 +53,6 @@ export async function PUT(request: NextRequest) {
 
         const body = await request.json();
         const {
-            telegramBotToken,
             telegramChatId,
             telegramEnabled,
             emailEnabled,
@@ -66,16 +64,18 @@ export async function PUT(request: NextRequest) {
             timezone,
         } = body;
 
-        // Validate: if enabling Telegram, both token and chatId are required
-        if (telegramEnabled && (!telegramBotToken || !telegramChatId)) {
-            return apiErrors.badRequest('Telegram Bot Token and Chat ID are required to enable Telegram notifications');
+        // Validate: if enabling Telegram, chatId is required and must be a valid Telegram ID
+        if (telegramChatId && !/^-?\d{1,20}$/.test(telegramChatId)) {
+            return apiErrors.badRequest('Invalid Chat ID format');
+        }
+        if (telegramEnabled && !telegramChatId) {
+            return apiErrors.badRequest('Chat ID is required to enable Telegram notifications');
         }
 
         const settings = await db.notificationSetting.upsert({
             where: { userId: session.user.id },
             create: {
                 userId: session.user.id,
-                telegramBotToken: telegramBotToken || null,
                 telegramChatId: telegramChatId || null,
                 telegramEnabled: !!telegramEnabled,
                 emailEnabled: !!emailEnabled,
@@ -87,7 +87,6 @@ export async function PUT(request: NextRequest) {
                 timezone: timezone || 'UTC',
             },
             update: {
-                telegramBotToken: telegramBotToken || null,
                 telegramChatId: telegramChatId || null,
                 telegramEnabled: !!telegramEnabled,
                 emailEnabled: !!emailEnabled,
@@ -120,11 +119,18 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { channel, telegramBotToken, telegramChatId } = body;
+        const { channel, telegramChatId } = body;
 
         if (channel === 'telegram') {
-            if (!telegramBotToken || !telegramChatId) {
-                return apiErrors.badRequest('Bot Token and Chat ID are required');
+            const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+            if (!telegramBotToken) {
+                return apiErrors.internalError('Telegram bot not configured (TELEGRAM_BOT_TOKEN missing)');
+            }
+            if (!telegramChatId) {
+                return apiErrors.badRequest('Chat ID is required');
+            }
+            if (!/^-?\d{1,20}$/.test(telegramChatId)) {
+                return apiErrors.badRequest('Invalid Chat ID format');
             }
 
             const settingsUrl = `${process.env.NEXTAUTH_URL || ''}/settings`;
