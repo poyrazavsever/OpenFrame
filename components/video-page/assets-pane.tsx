@@ -24,9 +24,37 @@ import { useCommentMedia } from '@/components/video-page/hooks/use-comment-media
 import { resolvePublicBunnyCdnHostname } from '@/lib/bunny-cdn';
 import { cn } from '@/lib/utils';
 
+const MAX_AUDIO_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_AUDIO_UPLOAD_SIZE_MESSAGE = 'File too large. Maximum size is 10MB.';
+
 function formatTime(seconds: number): string {
   const s = Math.floor(seconds);
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+type UploadAudioResponse = {
+  data?: { url?: string };
+  error?: string;
+};
+
+function getAudioUploadValidationError(file: Blob): string | null {
+  if (file.size > MAX_AUDIO_UPLOAD_SIZE) {
+    return MAX_AUDIO_UPLOAD_SIZE_MESSAGE;
+  }
+  return null;
+}
+
+async function readUploadAudioResponse(response: Response): Promise<UploadAudioResponse | null> {
+  const raw = await response.text().catch(() => '');
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  try {
+    return JSON.parse(trimmed) as UploadAudioResponse;
+  } catch {
+    if (trimmed.startsWith('<')) return null;
+    return { error: trimmed };
+  }
 }
 
 interface AssetsPaneProps {
@@ -513,6 +541,13 @@ export const AssetsPane = memo(function AssetsPane({
   const handleVoiceUpload = useCallback(async () => {
     const uploadSource = pendingAudioFile ?? audioBlob;
     if (!uploadSource) return;
+
+    const validationError = getAudioUploadValidationError(uploadSource);
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
     setIsUploadingVoice(true);
     try {
       const formData = new FormData();
@@ -529,10 +564,14 @@ export const AssetsPane = memo(function AssetsPane({
         method: 'POST',
         body: formData,
       });
-      const uploadPayload = (await uploadRes.json().catch(() => null)) as { data?: { url?: string }; error?: string } | null;
+      const uploadPayload = await readUploadAudioResponse(uploadRes);
       const uploadedUrl = uploadPayload?.data?.url;
       if (!uploadRes.ok || !uploadedUrl) {
-        toast.error(uploadPayload?.error || 'Failed to upload voice recording');
+        toast.error(
+          uploadPayload?.error
+          || (uploadRes.status === 413 ? MAX_AUDIO_UPLOAD_SIZE_MESSAGE : null)
+          || 'Failed to upload voice recording'
+        );
         return;
       }
 
@@ -548,8 +587,9 @@ export const AssetsPane = memo(function AssetsPane({
       setAudioBlob(null);
       setAudioBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
       setPendingAudioFile(null);
-    } catch {
-      toast.error('Failed to upload voice recording');
+    } catch (error) {
+      console.error('Failed to upload voice asset:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to upload voice recording');
     } finally {
       setIsUploadingVoice(false);
     }
@@ -592,6 +632,11 @@ export const AssetsPane = memo(function AssetsPane({
       setUploadTab('bunny');
       await handleBunnyFileUpload(file);
     } else if (file.type.startsWith('audio/')) {
+      const audioError = getAudioUploadValidationError(file);
+      if (audioError) {
+        toast.error(audioError);
+        return;
+      }
       // Stage the file so the user can optionally set a name before uploading
       setUploadTab('voice');
       setPendingAudioFile(file);

@@ -15,6 +15,7 @@ import {
 } from '@/lib/guest-upload-token';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_MULTIPART_BODY_SIZE = MAX_FILE_SIZE + (512 * 1024); // file + multipart overhead
 
 // Canonical MIME types accepted
 const ALLOWED_TYPES = new Set(['audio/webm', 'audio/ogg', 'audio/opus', 'audio/mp4', 'audio/mpeg', 'audio/wav']);
@@ -89,8 +90,8 @@ export async function POST(request: NextRequest) {
     // Check Content-Length header BEFORE loading the file
     const contentLength = request.headers.get('content-length');
     if (contentLength) {
-      const fileSize = parseInt(contentLength, 10);
-      if (isNaN(fileSize) || fileSize > MAX_FILE_SIZE) {
+      const bodySize = parseInt(contentLength, 10);
+      if (isNaN(bodySize) || bodySize > MAX_MULTIPART_BODY_SIZE) {
         return apiErrors.badRequest('File too large. Maximum size is 10MB.');
       }
     }
