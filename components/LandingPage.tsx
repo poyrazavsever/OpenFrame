@@ -670,7 +670,7 @@ export function LandingPage({ isLoggedIn }: LandingPageProps) {
         <div className="mx-auto flex max-w-[1200px] flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
             <Video className="h-4 w-4 text-primary" />
-            <span className="font-mono text-xs text-muted-foreground">© {new Date().getFullYear()} OpenFrame.</span>
+            <span className="font-mono text-xs text-muted-foreground">© 2026 IPEK TECH LLC. All rights reserved.</span>
           </div>
           <div className="flex gap-4">
             <a href="https://github.com/yusufipk/OpenFrame" className="text-xs text-muted-foreground hover:text-foreground">GitHub</a>
