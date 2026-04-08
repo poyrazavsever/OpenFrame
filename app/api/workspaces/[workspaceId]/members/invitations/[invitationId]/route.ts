@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { InvitationStatus, WorkspaceMemberRole } from '@prisma/client';
-import { auth } from '@/lib/auth';
+import { auth, checkWorkspaceAccess } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { rateLimit } from '@/lib/rate-limit';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
@@ -29,10 +29,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return apiErrors.notFound('Workspace');
     }
 
+    const access = await checkWorkspaceAccess(
+      { id: workspace.id, ownerId: workspace.ownerId },
+      session.user.id
+    );
     const isOwner = workspace.ownerId === session.user.id;
     const isAdmin = workspace.members[0]?.role === WorkspaceMemberRole.ADMIN;
 
-    if (!isOwner && !isAdmin) {
+    if (!access.canEdit || (!isOwner && !isAdmin)) {
       return apiErrors.forbidden('Only workspace owners and admins can cancel invitations');
     }
 

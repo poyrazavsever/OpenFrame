@@ -22,6 +22,16 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   onboardingCompletedAt DateTime?
+  trialEndsAt DateTime?
+  billingTrialConsumedAt DateTime?
+  stripeCustomerId String? @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId String?
+  stripeCurrentPeriodEnd DateTime?
+  stripeCancelAtPeriodEnd Boolean @default(false)
+  stripeCancelAt DateTime?
+  billingAccessEndedAt DateTime?
+  subscriptionStatus BillingSubscriptionStatus @default(FREE)
 
   // Relations
   accounts           Account[]
@@ -42,6 +52,17 @@ model User {
   sentInvitations           Invitation[] @relation("InvitationsSentBy")
   
   @@map("users")
+}
+
+enum BillingSubscriptionStatus {
+  FREE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
 }
 
 enum FeedbackEntryType {

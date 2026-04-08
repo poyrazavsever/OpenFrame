@@ -1,4 +1,5 @@
 import { db, disconnectDb } from '../lib/db';
+import { cleanupExpiredBillingWorkspaces } from './expired-billing-cleanup';
 
 const BUNNY_API_BASE = 'https://video.bunnycdn.com';
 const BUNNY_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -196,6 +197,10 @@ async function main() {
   const config = getBunnyConfig();
   console.log(`[bunny-orphan-cleanup] Starting (${dryRun ? 'dry-run' : 'delete mode'})`);
   console.log(`[bunny-orphan-cleanup] Grace period: ${graceHours}h`);
+
+  const expiredBillingCleanup = await cleanupExpiredBillingWorkspaces({ dryRun });
+  console.log(`[bunny-orphan-cleanup] Expired owner workspaces scanned: ${expiredBillingCleanup.scanned}`);
+  console.log(`[bunny-orphan-cleanup] Expired owner workspaces deleted: ${expiredBillingCleanup.deleted}`);
 
   const { videos, scanned, skippedInvalid } = await listBunnyVideos(config);
   const eligible = videos.filter((video) => video.uploadedAt.getTime() <= cutoff);

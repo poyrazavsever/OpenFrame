@@ -3,14 +3,21 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Loader2, Building2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Building2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
-export default function NewWorkspacePage() {
+export default function NewWorkspacePage({
+  workspaceCreation,
+}: {
+  workspaceCreation: {
+    canCreateWorkspace: boolean;
+    reason: string | null;
+  };
+}) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -62,65 +69,84 @@ export default function NewWorkspacePage() {
         <Card className="border-border/50 shadow-lg">
           <CardHeader className="text-center pb-2">
             <div className="mx-auto w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-              <Building2 className="h-7 w-7 text-primary" />
+              {workspaceCreation.canCreateWorkspace ? (
+                <Building2 className="h-7 w-7 text-primary" />
+              ) : (
+                <Lock className="h-7 w-7 text-primary" />
+              )}
             </div>
-            <CardTitle className="text-2xl">Create New Workspace</CardTitle>
+            <CardTitle className="text-2xl">
+              {workspaceCreation.canCreateWorkspace ? 'Create New Workspace' : 'Upgrade Required'}
+            </CardTitle>
             <CardDescription className="text-base">
-              Set up a workspace to organize projects and invite your team
+              {workspaceCreation.canCreateWorkspace
+                ? 'Set up a workspace to organize projects and invite your team'
+                : workspaceCreation.reason || 'Upgrade your account to create another workspace.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="name" className="text-sm font-medium">
-                  Workspace Name
-                </Label>
-                <Input
-                  id="name"
-                  placeholder="e.g., My Studio"
-                  value={formData.name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
-                  required
-                  disabled={isLoading}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="description" className="text-sm font-medium">
-                  Description{' '}
-                  <span className="text-muted-foreground font-normal">(optional)</span>
-                </Label>
-                <Textarea
-                  id="description"
-                  placeholder="What is this workspace for?"
-                  value={formData.description}
-                  onChange={(e) =>
-                    setFormData({ ...formData, description: e.target.value })
-                  }
-                  rows={3}
-                  disabled={isLoading}
-                />
-              </div>
-
-              {error && (
-                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                  {error}
+            {workspaceCreation.canCreateWorkspace ? (
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="name" className="text-sm font-medium">
+                    Workspace Name
+                  </Label>
+                  <Input
+                    id="name"
+                    placeholder="e.g., My Studio"
+                    value={formData.name}
+                    onChange={(e) =>
+                      setFormData({ ...formData, name: e.target.value })
+                    }
+                    required
+                    disabled={isLoading}
+                  />
                 </div>
-              )}
 
-              <Button type="submit" className="w-full" disabled={isLoading}>
-                {isLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  'Create Workspace'
+                <div className="space-y-2">
+                  <Label htmlFor="description" className="text-sm font-medium">
+                    Description{' '}
+                    <span className="text-muted-foreground font-normal">(optional)</span>
+                  </Label>
+                  <Textarea
+                    id="description"
+                    placeholder="What is this workspace for?"
+                    value={formData.description}
+                    onChange={(e) =>
+                      setFormData({ ...formData, description: e.target.value })
+                    }
+                    rows={3}
+                    disabled={isLoading}
+                  />
+                </div>
+
+                {error && (
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                    {error}
+                  </div>
                 )}
-              </Button>
-            </form>
+
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create Workspace'
+                  )}
+                </Button>
+              </form>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  You can still create and manage projects inside workspaces where you are already a member.
+                </p>
+                <Button asChild className="w-full">
+                  <Link href="/settings">Open Billing Settings</Link>
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

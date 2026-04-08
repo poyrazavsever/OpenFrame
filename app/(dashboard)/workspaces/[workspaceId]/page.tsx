@@ -14,7 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { auth } from '@/lib/auth';
+import { auth, checkWorkspaceAccess } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { VideoDragDropUploader } from '@/components/video-drag-drop-uploader';
 
@@ -94,8 +94,9 @@ export default async function WorkspacePage({ params, searchParams }: WorkspaceP
   const membership = workspace.members[0];
   const isMember = !!membership;
   const isAdmin = isOwner || membership?.role === 'ADMIN';
+  const access = await checkWorkspaceAccess({ id: workspace.id, ownerId: workspace.ownerId }, session.user.id);
 
-  if (!isOwner && !isMember) {
+  if (!access.hasAccess || (!isOwner && !isMember)) {
     redirect('/dashboard');
   }
 

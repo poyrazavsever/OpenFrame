@@ -59,9 +59,10 @@ interface HeaderProps {
     image?: string | null;
     isAdmin?: boolean;
   } | null;
+  showAppNavigation?: boolean;
 }
 
-export function Header({ user }: HeaderProps) {
+export function Header({ user, showAppNavigation = false }: HeaderProps) {
   const pathname = usePathname();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -70,13 +71,17 @@ export function Header({ user }: HeaderProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        if (!user || !showAppNavigation) {
+          return;
+        }
+
         e.preventDefault();
-        if (user) setSearchOpen((v) => !v);
+        setSearchOpen((v) => !v);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [user]);
+  }, [showAppNavigation, user]);
 
   // Hide header on video player pages — they use full viewport with their own back button
   const isVideoPage = /\/videos\/[^/]+($|\/compare)/.test(pathname) || pathname.startsWith('/watch/');
@@ -97,7 +102,7 @@ export function Header({ user }: HeaderProps) {
             <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
             <SheetDescription className="sr-only">Access your projects and workspaces</SheetDescription>
             <nav className="flex flex-col gap-2 mt-10">
-              {navItems.map((item) => (
+              {showAppNavigation && navItems.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -138,7 +143,7 @@ export function Header({ user }: HeaderProps) {
 
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-1">
-          {navItems.map((item) => (
+          {showAppNavigation && navItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -171,7 +176,7 @@ export function Header({ user }: HeaderProps) {
 
         {/* Right side */}
         <div className="flex items-center gap-2 ml-auto">
-          {user && (
+          {user && showAppNavigation && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -193,7 +198,7 @@ export function Header({ user }: HeaderProps) {
               </Tooltip>
             </TooltipProvider>
           )}
-          {user && (
+          {user && showAppNavigation && (
             <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
               <Link href="/feedback">
                 <MessageSquareQuote className="h-4 w-4 mr-1.5" />
@@ -201,7 +206,7 @@ export function Header({ user }: HeaderProps) {
               </Link>
             </Button>
           )}
-          {user && (
+          {user && showAppNavigation && (
             <Button asChild variant="ghost" size="icon" className="sm:hidden" aria-label="Feedback and reviews">
               <Link href="/feedback">
                 <MessageSquareQuote className="h-4 w-4" />
@@ -223,12 +228,16 @@ export function Header({ user }: HeaderProps) {
                   </Avatar>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <div className="flex items-center justify-start gap-2 p-2">
+              <DropdownMenuContent
+                align="end"
+                sideOffset={10}
+                className="w-64 min-w-64 rounded-md border bg-popover/98 p-1 shadow-2xl backdrop-blur-md"
+              >
+                <div className="rounded-sm px-3 py-2.5">
                   <div className="flex flex-col space-y-1 leading-none">
                     {user.name && <p className="font-medium">{user.name}</p>}
                     {user.email && (
-                      <p className="w-[200px] truncate text-sm text-muted-foreground">
+                      <p className="truncate text-sm text-muted-foreground">
                         {user.email}
                       </p>
                     )}
@@ -273,7 +282,7 @@ export function Header({ user }: HeaderProps) {
         </div>
       </div>
       <KeyboardShortcutsModal open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-      {user && <SearchModal open={searchOpen} onOpenChange={setSearchOpen} />}
+      {user && showAppNavigation && <SearchModal open={searchOpen} onOpenChange={setSearchOpen} />}
     </header>
   );
 }

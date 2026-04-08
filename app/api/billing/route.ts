@@ -1,0 +1,40 @@
+import { auth } from '@/lib/auth';
+import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
+import { getBillingOverview } from '@/lib/billing';
+import { isStripeConfigured } from '@/lib/stripe';
+
+export async function GET() {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return apiErrors.unauthorized();
+    }
+
+    const billing = await getBillingOverview(session.user.id);
+    const response = successResponse({
+      isConfigured: isStripeConfigured(),
+      checkoutAvailable: isStripeConfigured() && !billing.subscription.hasActiveSubscription,
+      portalAvailable: isStripeConfigured() && Boolean(billing.subscription.stripeCustomerId),
+      subscription: {
+        status: billing.subscription.status,
+        label: billing.subscription.label,
+        hasActiveSubscription: billing.subscription.hasActiveSubscription,
+        hasActiveTrial: billing.subscription.hasActiveTrial,
+        hasBillingAccess: billing.subscription.hasBillingAccess,
+        priceId: billing.subscription.stripePriceId,
+        currentPeriodEnd: billing.subscription.currentPeriodEnd?.toISOString() ?? null,
+        cancelAtPeriodEnd: billing.subscription.cancelAtPeriodEnd ?? false,
+        cancelAt: billing.subscription.cancelAt?.toISOString() ?? null,
+        trialEndsAt: billing.subscription.trialEndsAt?.toISOString() ?? null,
+        billingAccessEndedAt: billing.subscription.billingAccessEndedAt?.toISOString() ?? null,
+        storageCleanupEligibleAt: billing.subscription.storageCleanupEligibleAt?.toISOString() ?? null,
+      },
+      workspaceCreation: billing.workspaceCreation,
+    });
+
+    return withCacheControl(response, 'private, no-store');
+  } catch (error) {
+    console.error('Error fetching billing overview:', error);
+    return apiErrors.internalError('Failed to fetch billing overview');
+  }
+}

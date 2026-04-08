@@ -1,6 +1,7 @@
 import { DeleteObjectCommand, ListObjectsV2Command, type ListObjectsV2CommandInput } from '@aws-sdk/client-s3';
 import { db, disconnectDb } from '../lib/db';
 import { r2Client, R2_BUCKET_NAME } from '../lib/r2';
+import { cleanupExpiredBillingWorkspaces } from './expired-billing-cleanup';
 
 const UNATTACHED_UPLOAD_TTL_MS = 15 * 60 * 1000;
 const CHUNK_SIZE = 500;
@@ -126,6 +127,10 @@ async function findReferencedUrls(urls: string[]): Promise<Set<string>> {
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   console.log(`[r2-orphan-cleanup] Starting (${dryRun ? 'dry-run' : 'delete mode'})`);
+
+  const expiredBillingCleanup = await cleanupExpiredBillingWorkspaces({ dryRun });
+  console.log(`[r2-orphan-cleanup] Expired owner workspaces scanned: ${expiredBillingCleanup.scanned}`);
+  console.log(`[r2-orphan-cleanup] Expired owner workspaces deleted: ${expiredBillingCleanup.deleted}`);
 
   const { candidates, scanned } = await listCleanupCandidates();
   console.log(`[r2-orphan-cleanup] Scanned: ${scanned}, eligible (old enough): ${candidates.length}`);

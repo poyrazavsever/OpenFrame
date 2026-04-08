@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { auth, checkWorkspaceAccess } from '@/lib/auth';
 import { InvitationRole, WorkspaceMemberRole } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
 import { buildInvitationUrl, createOrRefreshInvitation, sendInvitationEmail } from '@/lib/invitations';
@@ -53,11 +53,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Workspace');
         }
 
+        const access = await checkWorkspaceAccess(
+            { id: workspace.id, ownerId: workspace.ownerId },
+            session.user.id
+        );
         const isOwner = workspace.ownerId === session.user.id;
         const isMember = workspace.members.length > 0;
         const isAdmin = workspace.members[0]?.role === WorkspaceMemberRole.ADMIN;
 
-        if (!isOwner && !isMember) {
+        if (!access.hasAccess || (!isOwner && !isMember)) {
             return apiErrors.forbidden('Access denied');
         }
 
@@ -145,10 +149,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Workspace');
         }
 
+        const access = await checkWorkspaceAccess(
+            { id: workspace.id, ownerId: workspace.ownerId },
+            session.user.id
+        );
         const isOwner = workspace.ownerId === session.user.id;
         const isAdmin = workspace.members[0]?.role === WorkspaceMemberRole.ADMIN;
 
-        if (!isOwner && !isAdmin) {
+        if (!access.canEdit || (!isOwner && !isAdmin)) {
             return apiErrors.forbidden('Only workspace owners and admins can invite members');
         }
 

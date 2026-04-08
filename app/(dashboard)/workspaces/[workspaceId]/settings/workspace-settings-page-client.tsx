@@ -30,7 +30,13 @@ interface WorkspaceData {
   ownerId: string;
 }
 
-export default function WorkspaceSettingsPageClient({ workspaceId }: { workspaceId: string }) {
+export default function WorkspaceSettingsPageClient({
+  workspaceId,
+  canDelete,
+}: {
+  workspaceId: string;
+  canDelete: boolean;
+}) {
   const router = useRouter();
 
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
@@ -202,65 +208,68 @@ export default function WorkspaceSettingsPageClient({ workspaceId }: { workspace
         </CardContent>
       </Card>
 
-      <Separator className="my-8" />
+      {canDelete ? (
+        <>
+          <Separator className="my-8" />
 
-      {/* Danger Zone */}
-      <Card className="border-destructive/50">
-        <CardHeader>
-          <CardTitle className="text-destructive">Danger Zone</CardTitle>
-          <CardDescription>
-            Irreversible actions. Proceed with caution.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive">
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete Workspace
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete &quot;{workspace.name}&quot;?</AlertDialogTitle>
-                <AlertDialogDescription asChild>
-                  <div className="space-y-4">
-                    <p>
-                      This will permanently delete this workspace and everything inside it
-                      (projects, videos, comments, images, and voice notes). This action cannot be undone.
-                    </p>
-                    <div className="space-y-2">
-                      <Label htmlFor="delete-workspace-confirm">
-                        Type <strong className="text-foreground">{workspace.name}</strong> to confirm
-                      </Label>
-                      <Input
-                        id="delete-workspace-confirm"
-                        value={deleteConfirmation}
-                        onChange={(e) => setDeleteConfirmation(e.target.value)}
-                        placeholder="Workspace name"
-                        className="h-11"
-                      />
-                    </div>
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel onClick={() => setDeleteConfirmation('')}>
-                  Cancel
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDelete}
-                  disabled={deleteConfirmation !== workspace.name || isDeleting}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  Delete Workspace
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </CardContent>
-      </Card>
+          <Card className="border-destructive/50">
+            <CardHeader>
+              <CardTitle className="text-destructive">Danger Zone</CardTitle>
+              <CardDescription>
+                Irreversible actions. Proceed with caution.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive">
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete Workspace
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete &quot;{workspace.name}&quot;?</AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-4">
+                        <p>
+                          This will permanently delete this workspace and everything inside it
+                          (projects, videos, comments, images, and voice notes). This action cannot be undone.
+                        </p>
+                        <div className="space-y-2">
+                          <Label htmlFor="delete-workspace-confirm">
+                            Type <strong className="text-foreground">{workspace.name}</strong> to confirm
+                          </Label>
+                          <Input
+                            id="delete-workspace-confirm"
+                            value={deleteConfirmation}
+                            onChange={(e) => setDeleteConfirmation(e.target.value)}
+                            placeholder="Workspace name"
+                            className="h-11"
+                          />
+                        </div>
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel onClick={() => setDeleteConfirmation('')}>
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDelete}
+                      disabled={deleteConfirmation !== workspace.name || isDeleting}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Delete Workspace
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
     </div>
   );
 }

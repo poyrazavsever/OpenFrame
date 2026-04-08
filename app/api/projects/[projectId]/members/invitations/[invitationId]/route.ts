@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { InvitationStatus, ProjectMemberRole } from '@prisma/client';
-import { auth } from '@/lib/auth';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { rateLimit } from '@/lib/rate-limit';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
@@ -29,10 +29,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return apiErrors.notFound('Project');
     }
 
+    const access = await checkProjectAccess(project, session.user.id, { intent: 'manage' });
     const isOwner = project.ownerId === session.user.id;
     const isAdmin = project.members[0]?.role === ProjectMemberRole.ADMIN;
 
-    if (!isOwner && !isAdmin) {
+    if (!access.canEdit || (!isOwner && !isAdmin)) {
       return apiErrors.forbidden('Only project owners and admins can cancel invitations');
     }
 

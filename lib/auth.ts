@@ -3,6 +3,7 @@ import Credentials from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { db } from '@/lib/db';
 import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
+import { hasBillingAccess } from '@/lib/billing';
 
 // Dummy hash for timing-safe comparison when user doesn't exist
 // This prevents user enumeration via timing attacks
@@ -114,6 +115,7 @@ export async function checkProjectAccess(
 
   // Check workspace membership/role
   let workspaceRole: WorkspaceMemberRole | 'OWNER' | null = null;
+  let workspaceOwnerBillingAccess = false;
   if (shouldLoadWorkspaceRole && userId) {
     const [wsMember, wsOwner] = await Promise.all([
       db.workspaceMember.findUnique({
@@ -121,7 +123,17 @@ export async function checkProjectAccess(
       }),
       db.workspace.findUnique({
         where: { id: project.workspaceId },
-        select: { ownerId: true },
+        select: {
+          ownerId: true,
+          owner: {
+            select: {
+              subscriptionStatus: true,
+              trialEndsAt: true,
+              stripeCurrentPeriodEnd: true,
+              billingAccessEndedAt: true,
+            },
+          },
+        },
       }),
     ]);
 
@@ -130,13 +142,32 @@ export async function checkProjectAccess(
     } else if (wsMember) {
       workspaceRole = wsMember.role;
     }
+
+    if (wsOwner?.owner) {
+      workspaceOwnerBillingAccess = hasBillingAccess(wsOwner.owner);
+    }
+  } else {
+    const wsOwner = await db.workspace.findUnique({
+      where: { id: project.workspaceId },
+      select: {
+        owner: {
+          select: {
+            subscriptionStatus: true,
+            trialEndsAt: true,
+            stripeCurrentPeriodEnd: true,
+            billingAccessEndedAt: true,
+          },
+        },
+      },
+    });
+    workspaceOwnerBillingAccess = wsOwner?.owner ? hasBillingAccess(wsOwner.owner) : false;
   }
   const isWorkspaceMember = !!workspaceRole;
   const isWorkspaceAdmin = workspaceRole === WorkspaceMemberRole.ADMIN || workspaceRole === 'OWNER';
 
-  const hasAccess = isOwner || isProjectMember || isPublic || isWorkspaceMember;
-  const canEdit = isOwner || isProjectAdmin || isWorkspaceAdmin;
-  const canDelete = isOwner || workspaceRole === 'OWNER';
+  const hasAccess = workspaceOwnerBillingAccess && (isOwner || isProjectMember || isPublic || isWorkspaceMember);
+  const canEdit = workspaceOwnerBillingAccess && (isOwner || isProjectAdmin || isWorkspaceAdmin);
+  const canDelete = workspaceOwnerBillingAccess && (isOwner || workspaceRole === 'OWNER');
 
   return {
     isOwner,
@@ -147,6 +178,7 @@ export async function checkProjectAccess(
     hasAccess,
     canEdit,
     canDelete,
+    ownerBillingActive: workspaceOwnerBillingAccess,
   };
 }
 
@@ -166,9 +198,20 @@ export async function checkWorkspaceAccess(
   const isMember = !!workspaceMember;
   const isAdmin = workspaceMember?.role === WorkspaceMemberRole.ADMIN;
 
-  const hasAccess = isOwner || isMember;
-  const canEdit = isOwner || isAdmin;
-  const canDelete = isOwner;
+  const owner = await db.user.findUnique({
+    where: { id: workspace.ownerId },
+    select: {
+      subscriptionStatus: true,
+      trialEndsAt: true,
+      stripeCurrentPeriodEnd: true,
+      billingAccessEndedAt: true,
+    },
+  });
+  const ownerBillingActive = owner ? hasBillingAccess(owner) : false;
+
+  const hasAccess = ownerBillingActive && (isOwner || isMember);
+  const canEdit = ownerBillingActive && (isOwner || isAdmin);
+  const canDelete = ownerBillingActive && isOwner;
 
   return {
     isOwner,
@@ -177,5 +220,6 @@ export async function checkWorkspaceAccess(
     hasAccess,
     canEdit,
     canDelete,
+    ownerBillingActive,
   };
 }

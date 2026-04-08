@@ -35,9 +35,18 @@ interface WorkspacesClientProps {
   workspaces: SerializedWorkspace[];
   totalPages: number;
   currentPage: number;
+  workspaceCreation: {
+    canCreateWorkspace: boolean;
+    reason: string | null;
+  };
 }
 
-export function WorkspacesClient({ workspaces, totalPages, currentPage }: WorkspacesClientProps) {
+export function WorkspacesClient({
+  workspaces,
+  totalPages,
+  currentPage,
+  workspaceCreation,
+}: WorkspacesClientProps) {
   const router = useRouter();
 
   return (
@@ -49,13 +58,26 @@ export function WorkspacesClient({ workspaces, totalPages, currentPage }: Worksp
           <p className="text-muted-foreground mt-1">
             Manage your workspaces and their projects
           </p>
+          {!workspaceCreation.canCreateWorkspace && workspaceCreation.reason ? (
+            <p className="text-sm text-amber-700 dark:text-amber-400 mt-2">
+              {workspaceCreation.reason}
+            </p>
+          ) : null}
         </div>
-        <Button asChild className="w-full sm:w-auto">
-          <Link href="/workspaces/new">
-            <Plus className="h-4 w-4 mr-2" />
-            New Workspace
-          </Link>
-        </Button>
+        {workspaceCreation.canCreateWorkspace ? (
+          <Button asChild className="w-full sm:w-auto">
+            <Link href="/workspaces/new">
+              <Plus className="h-4 w-4 mr-2" />
+              New Workspace
+            </Link>
+          </Button>
+        ) : (
+          <Button asChild className="w-full sm:w-auto">
+            <Link href="/settings">
+              Upgrade to Create Workspace
+            </Link>
+          </Button>
+        )}
       </div>
 
       {/* Workspaces Grid */}
@@ -101,12 +123,18 @@ export function WorkspacesClient({ workspaces, totalPages, currentPage }: Worksp
             <p className="text-muted-foreground text-center mb-4">
               Create a workspace to organize your projects and invite team members
             </p>
-            <Button asChild>
-              <Link href="/workspaces/new">
-                <Plus className="h-4 w-4 mr-2" />
-                Create Workspace
-              </Link>
-            </Button>
+            {workspaceCreation.canCreateWorkspace ? (
+              <Button asChild>
+                <Link href="/workspaces/new">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Workspace
+                </Link>
+              </Button>
+            ) : (
+              <Button asChild>
+                <Link href="/settings">Upgrade to Create Workspace</Link>
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}

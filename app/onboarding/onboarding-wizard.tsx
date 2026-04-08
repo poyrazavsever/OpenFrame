@@ -25,6 +25,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 type Visibility = 'PRIVATE' | 'INVITE' | 'PUBLIC';
@@ -110,9 +117,17 @@ function StepWelcome({ userName, onNext }: { userName: string; onNext: () => voi
 // ─── Step 2: Create Workspace ──────────────────────────────────────────────────
 
 function StepWorkspace({
+    canCreateWorkspace,
+    availableWorkspaces,
+    selectedWorkspaceId,
+    onWorkspaceSelected,
     onNext,
     onWorkspaceCreated,
 }: {
+    canCreateWorkspace: boolean;
+    availableWorkspaces: Array<{ id: string; name: string; isOwner: boolean }>;
+    selectedWorkspaceId: string | null;
+    onWorkspaceSelected: (workspaceId: string) => void;
     onNext: () => void;
     onWorkspaceCreated: (id: string) => void;
 }) {
@@ -143,6 +158,70 @@ function StepWorkspace({
             setIsLoading(false);
         }
     };
+
+    if (!canCreateWorkspace) {
+        return (
+            <div className="space-y-7">
+                <div className="text-center space-y-3">
+                    <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                        <Building2 className="h-8 w-8 text-primary" />
+                    </div>
+                    <h2 className="text-2xl font-bold tracking-tight">Workspace access</h2>
+                    <p className="text-base text-muted-foreground">
+                        Your account can&apos;t create a new workspace right now.
+                    </p>
+                </div>
+
+                {availableWorkspaces.length > 0 ? (
+                    <div className="space-y-5">
+                        <div className="flex items-start gap-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                            <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                            <span>
+                                You can still create projects inside workspaces where you already have admin access.
+                            </span>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="onboarding-workspace">Choose a workspace</Label>
+                            <Select
+                                value={selectedWorkspaceId ?? undefined}
+                                onValueChange={onWorkspaceSelected}
+                            >
+                                <SelectTrigger id="onboarding-workspace" className="w-full">
+                                    <SelectValue placeholder="Select a workspace" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {availableWorkspaces.map((workspace) => (
+                                        <SelectItem key={workspace.id} value={workspace.id}>
+                                            {workspace.name}{workspace.isOwner ? ' (Owner)' : ' (Admin)'}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <Button onClick={onNext} className="w-full h-11" disabled={!selectedWorkspaceId}>
+                            Continue
+                            <ChevronRight className="h-4 w-4 ml-1" />
+                        </Button>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                            <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                            <span>
+                                You don&apos;t currently have a workspace where you can create projects. Ask a workspace owner to invite you as an admin, or upgrade later to create your own workspace.
+                            </span>
+                        </div>
+                        <Button onClick={onNext} className="w-full h-11">
+                            Continue
+                            <ChevronRight className="h-4 w-4 ml-1" />
+                        </Button>
+                    </div>
+                )}
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-7">
@@ -217,10 +296,14 @@ function StepWorkspace({
 
 function StepProject({
     workspaceId,
+    availableWorkspaces,
+    canCreateWorkspace,
     onNext,
     onProjectCreated,
 }: {
     workspaceId: string | null;
+    availableWorkspaces: Array<{ id: string; name: string; isOwner: boolean }>;
+    canCreateWorkspace: boolean;
     onNext: () => void;
     onProjectCreated: (id: string) => void;
 }) {
@@ -273,7 +356,13 @@ function StepProject({
                 <div className="space-y-4">
                     <div className="flex items-start gap-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                         <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                        <span>You skipped workspace creation. Projects require a workspace — you can create both from the dashboard later.</span>
+                        <span>
+                            {canCreateWorkspace
+                                ? 'You skipped workspace creation. Projects require a workspace — you can create both from the dashboard later.'
+                                : availableWorkspaces.length === 0
+                                    ? 'You do not currently have permission to create projects in any workspace.'
+                                    : 'Pick a workspace in the previous step to create a project here.'}
+                        </span>
                     </div>
                     <Button onClick={onNext} className="w-full h-11">
                         Continue
@@ -547,10 +636,18 @@ function StepNotifications({ onFinish }: { onFinish: () => Promise<void> }) {
 
 // ─── Wizard Shell ──────────────────────────────────────────────────────────────
 
-export function OnboardingWizard({ userName }: { userName: string }) {
+export function OnboardingWizard({
+    userName,
+    canCreateWorkspace,
+    availableWorkspaces,
+}: {
+    userName: string;
+    canCreateWorkspace: boolean;
+    availableWorkspaces: Array<{ id: string; name: string; isOwner: boolean }>;
+}) {
     const router = useRouter();
     const [currentStep, setCurrentStep] = useState(1);
-    const [createdWorkspaceId, setCreatedWorkspaceId] = useState<string | null>(null);
+    const [createdWorkspaceId, setCreatedWorkspaceId] = useState<string | null>(availableWorkspaces[0]?.id ?? null);
     const [isCompleting, setIsCompleting] = useState(false);
 
     const goNext = () => setCurrentStep((s) => Math.min(s + 1, TOTAL_STEPS));
@@ -615,10 +712,23 @@ export function OnboardingWizard({ userName }: { userName: string }) {
                         <StepWelcome userName={userName} onNext={goNext} />
                     )}
                     {currentStep === 2 && (
-                        <StepWorkspace onNext={goNext} onWorkspaceCreated={setCreatedWorkspaceId} />
+                        <StepWorkspace
+                            canCreateWorkspace={canCreateWorkspace}
+                            availableWorkspaces={availableWorkspaces}
+                            selectedWorkspaceId={createdWorkspaceId}
+                            onWorkspaceSelected={setCreatedWorkspaceId}
+                            onNext={goNext}
+                            onWorkspaceCreated={setCreatedWorkspaceId}
+                        />
                     )}
                     {currentStep === 3 && (
-                        <StepProject workspaceId={createdWorkspaceId} onNext={goNext} onProjectCreated={() => {}} />
+                        <StepProject
+                            workspaceId={createdWorkspaceId}
+                            availableWorkspaces={availableWorkspaces}
+                            canCreateWorkspace={canCreateWorkspace}
+                            onNext={goNext}
+                            onProjectCreated={() => {}}
+                        />
                     )}
                     {currentStep === 4 && (
                         <StepVideo onNext={goNext} />

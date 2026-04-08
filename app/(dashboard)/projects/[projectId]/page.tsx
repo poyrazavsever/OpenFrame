@@ -4,7 +4,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { GuestGate } from '@/components/guest-gate';
-import { auth } from '@/lib/auth';
+import { auth, checkProjectAccess } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { ProjectContentClient } from './project-content-client';
 
@@ -65,6 +65,8 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
     notFound();
   }
 
+  const access = await checkProjectAccess(project, session?.user?.id);
+
   // Check access
   const isOwner = session?.user?.id === project.ownerId;
   const isMember = project.members.length > 0;
@@ -92,7 +94,7 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
     }
   }
 
-  if (!isOwner && !isMember && !isPublic && !isWorkspaceMember) {
+  if (!access.hasAccess || (!isOwner && !isMember && !isPublic && !isWorkspaceMember)) {
     if (!session?.user?.id) {
       redirect('/login');
     }
@@ -139,7 +141,7 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
     };
   });
 
-  const canEdit = isOwner || project.members[0]?.role === 'ADMIN' || workspaceRole === 'OWNER' || workspaceRole === 'ADMIN';
+  const canEdit = access.canEdit && (isOwner || project.members[0]?.role === 'ADMIN' || workspaceRole === 'OWNER' || workspaceRole === 'ADMIN');
   const isAuthenticated = !!session?.user?.id;
 
   const projectData = {

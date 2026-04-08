@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { auth, checkWorkspaceAccess } from '@/lib/auth';
 import { ProjectVisibility } from '@prisma/client';
 import { rateLimit } from '@/lib/rate-limit';
+import { buildBillingAccessWhereInput } from '@/lib/billing';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { DEFAULT_COMMENT_TAGS } from '@/lib/comment-tags';
 
@@ -48,10 +49,14 @@ export async function GET(request: NextRequest) {
                 // Also include projects in workspaces where the user is a workspace member
                 ...(workspaceId ? [] : [{
                     workspace: {
+                        owner: buildBillingAccessWhereInput(),
                         members: { some: { userId: session.user.id } },
                     },
                 }]),
             ],
+            workspace: {
+                owner: buildBillingAccessWhereInput(),
+            },
         };
 
         // Filter by workspace if provided
@@ -150,10 +155,12 @@ export async function POST(request: NextRequest) {
             return apiErrors.notFound('Workspace');
         }
 
-        const isWsOwner = workspace.ownerId === session.user.id;
-        const isWsAdmin = workspace.members[0]?.role === 'ADMIN';
+        const access = await checkWorkspaceAccess(
+            { id: workspace.id, ownerId: workspace.ownerId },
+            session.user.id
+        );
 
-        if (!isWsOwner && !isWsAdmin) {
+        if (!access.canEdit) {
             return apiErrors.forbidden('Only workspace owners and admins can create projects');
         }
 
@@ -164,7 +171,7 @@ export async function POST(request: NextRequest) {
                     description: description?.trim() || null,
                     slug,
                     visibility: visibility || ProjectVisibility.PRIVATE,
-                    ownerId: session.user.id,
+                    ownerId: workspace.ownerId,
                     workspaceId,
                 },
                 include: {

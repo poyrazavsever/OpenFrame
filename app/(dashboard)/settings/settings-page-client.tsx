@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Bell, Send, Mail, CheckCircle2, AlertCircle, Loader2, Globe } from 'lucide-react';
+import { Bell, Send, Mail, CheckCircle2, AlertCircle, Loader2, Globe, CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,6 +30,32 @@ interface NotificationSettings {
   onNewReply: boolean;
   onApprovalEvents: boolean;
   timezone: string;
+}
+
+interface BillingOverview {
+  isConfigured: boolean;
+  checkoutAvailable: boolean;
+  portalAvailable: boolean;
+  subscription: {
+    status: string;
+    label: string;
+    hasActiveSubscription: boolean;
+    hasActiveTrial: boolean;
+    hasBillingAccess: boolean;
+    priceId: string | null;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd: boolean;
+    cancelAt: string | null;
+    trialEndsAt: string | null;
+    billingAccessEndedAt: string | null;
+    storageCleanupEligibleAt: string | null;
+  };
+  workspaceCreation: {
+    canCreateWorkspace: boolean;
+    reason: string | null;
+    ownedWorkspaceCount: number;
+    invitedWorkspaceCount: number;
+  };
 }
 
 function ToggleButton({
@@ -77,7 +103,7 @@ function ToggleButton({
   );
 }
 
-export default function SettingsPage() {
+export default function SettingsPage({ billingOnly = false }: { billingOnly?: boolean }) {
   const [settings, setSettings] = useState<NotificationSettings>({
     telegramChatId: null,
     telegramEnabled: false,
@@ -92,24 +118,41 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
+  const [billing, setBilling] = useState<BillingOverview | null>(null);
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingAction, setBillingAction] = useState<'checkout' | 'portal' | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Form state for Telegram chat ID (separate from saved settings for editing)
   const [telegramChatId, setTelegramChatId] = useState('');
 
+  const hasScheduledCancellation = Boolean(
+    billing?.subscription.cancelAtPeriodEnd || billing?.subscription.cancelAt
+  );
+
   useEffect(() => {
     async function fetchSettings() {
       try {
-        const res = await fetch('/api/settings/notifications');
-        if (res.ok) {
-          const data = await res.json();
+        const [settingsRes, billingRes] = await Promise.all([
+          fetch('/api/settings/notifications'),
+          fetch('/api/billing'),
+        ]);
+
+        if (settingsRes.ok) {
+          const data = await settingsRes.json();
           setSettings(data.data);
           setTelegramChatId(data.data.telegramChatId || '');
         }
+
+        if (billingRes.ok) {
+          const data = await billingRes.json();
+          setBilling(data.data);
+        }
       } catch {
-        console.error('Failed to fetch notification settings');
+        console.error('Failed to fetch settings');
       } finally {
         setLoading(false);
+        setBillingLoading(false);
       }
     }
     fetchSettings();
@@ -174,6 +217,31 @@ export default function SettingsPage() {
     [telegramChatId, showMessage]
   );
 
+  const handleBillingRedirect = useCallback(
+    async (endpoint: '/api/billing/checkout' | '/api/billing/portal') => {
+      setBillingAction(endpoint.endsWith('checkout') ? 'checkout' : 'portal');
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          showMessage('error', data.error || 'Failed to open billing flow');
+          return;
+        }
+
+        window.location.href = data.data.url;
+      } catch {
+        showMessage('error', 'Failed to open billing flow');
+      } finally {
+        setBillingAction(null);
+      }
+    },
+    [showMessage]
+  );
+
   if (loading) {
     return (
       <div className="max-w-2xl mx-auto py-8 px-4 space-y-6">
@@ -212,7 +280,7 @@ export default function SettingsPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-1">
-          Manage your notification preferences
+          {billingOnly ? 'Manage your billing access' : 'Manage your notification preferences'}
         </p>
       </div>
 
@@ -235,6 +303,130 @@ export default function SettingsPage() {
         </div>
       )}
 
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CreditCard className="h-5 w-5" />
+            Billing
+          </CardTitle>
+          <CardDescription>
+            Manage your paid plan and workspace creation access
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {billingLoading || !billing ? (
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-10 w-44 rounded-md" />
+            </div>
+          ) : !billing.isConfigured ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400">
+              Stripe is not configured yet. Add your Stripe environment variables before using billing.
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <p className="text-sm font-medium">Current plan</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {billing.subscription.hasActiveSubscription
+                      ? hasScheduledCancellation
+                        ? billing.subscription.hasActiveTrial
+                          ? 'Trial canceled. Access remains active until the trial ends.'
+                          : 'Subscription canceled. Access remains active until the end of the current billing period.'
+                        : 'Paid account with workspace creation unlocked.'
+                      : billing.subscription.hasActiveTrial
+                        ? 'Trial access is active.'
+                        : 'Billing access has ended.'}
+                  </p>
+                </div>
+                <Badge
+                  variant={billing.subscription.hasActiveSubscription ? 'default' : 'secondary'}
+                >
+                  {billing.subscription.label}
+                </Badge>
+              </div>
+
+              {billing.subscription.hasActiveTrial
+              && billing.subscription.trialEndsAt
+              && hasScheduledCancellation ? (
+                <p
+                  className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive"
+                >
+                  Access ends on {' '}
+                  {new Date(billing.subscription.trialEndsAt).toLocaleDateString()}.
+                </p>
+              ) : null}
+
+              {billing.subscription.currentPeriodEnd ? (
+                <p className="text-sm text-muted-foreground">
+                  {hasScheduledCancellation ? 'Your subscription ends on ' : 'Current billing period ends on '}
+                  {new Date(billing.subscription.currentPeriodEnd).toLocaleDateString()}.
+                </p>
+              ) : null}
+
+              {hasScheduledCancellation && billing.subscription.cancelAt ? (
+                <p className="text-sm text-muted-foreground">
+                  Cancellation was scheduled on {new Date(billing.subscription.cancelAt).toLocaleDateString()}.
+                </p>
+              ) : null}
+
+              {!billing.subscription.hasBillingAccess
+              && billing.subscription.billingAccessEndedAt
+              && billing.subscription.storageCleanupEligibleAt ? (
+                <p className="text-sm text-amber-700 dark:text-amber-400">
+                  Stored media cleanup is scheduled after {new Date(billing.subscription.storageCleanupEligibleAt).toLocaleDateString()} unless billing is restored first.
+                </p>
+              ) : null}
+
+              <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+                <p className="text-sm font-medium">Workspace creation</p>
+                <p className="text-sm text-muted-foreground">
+                  {billing.workspaceCreation.canCreateWorkspace
+                    ? 'This account can create workspaces.'
+                    : billing.workspaceCreation.reason || 'Upgrade to create another workspace.'}
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                {billing.subscription.hasActiveSubscription && billing.portalAvailable ? (
+                  <Button
+                    onClick={() => handleBillingRedirect('/api/billing/portal')}
+                    disabled={billingAction !== null}
+                  >
+                    {billingAction === 'portal' ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Opening Portal...
+                      </>
+                    ) : (
+                      'Manage Subscription'
+                    )}
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => handleBillingRedirect('/api/billing/checkout')}
+                    disabled={!billing.checkoutAvailable || billingAction !== null}
+                  >
+                    {billingAction === 'checkout' ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Redirecting...
+                      </>
+                    ) : (
+                      'Upgrade with Stripe'
+                    )}
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {!billingOnly && (
+        <>
       {/* Event Subscriptions */}
       <Card className="mb-6">
         <CardHeader>
@@ -246,7 +438,7 @@ export default function SettingsPage() {
             Choose which events trigger notifications
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-4">
           <ToggleButton
             enabled={settings.onNewVideo}
             onToggle={() =>
@@ -518,6 +710,8 @@ export default function SettingsPage() {
           )}
         </Button>
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import type { ShareLink, SharePermission } from '@prisma/client';
 import { db } from '@/lib/db';
+import { hasBillingAccess } from '@/lib/billing';
 
 export const MAX_SHARE_PASSWORD_LENGTH = 128;
 
@@ -45,6 +46,24 @@ export async function validateShareLinkAccess({
 }: ValidateShareLinkParams): Promise<ShareLinkAccessResult> {
   const link = await db.shareLink.findUnique({
     where: { token },
+    include: {
+      project: {
+        select: {
+          workspace: {
+            select: {
+              owner: {
+                select: {
+                  subscriptionStatus: true,
+                  trialEndsAt: true,
+                  stripeCurrentPeriodEnd: true,
+                  billingAccessEndedAt: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!link) {
@@ -57,6 +76,10 @@ export async function validateShareLinkAccess({
   const permissionMatches = hasRequiredPermission(link.permission, requiredPermission);
 
   if (!projectMatches || !videoMatches || !permissionMatches || isLinkExpired(link)) {
+    return { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false, link };
+  }
+
+  if (!link.project?.workspace.owner || !hasBillingAccess(link.project.workspace.owner)) {
     return { hasAccess: false, canComment: false, canDownload: false, allowGuests: false, requiresPassword: false, link };
   }
 

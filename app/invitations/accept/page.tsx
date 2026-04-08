@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
+import { db } from '@/lib/db';
 import { acceptInvitationTokenForUser } from '@/lib/invitations';
 
 interface InvitationAcceptPageProps {
@@ -23,6 +24,26 @@ export default async function InvitationAcceptPage({ searchParams }: InvitationA
     redirect(`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
   }
 
+  const invitation = await db.invitation.findUnique({
+    where: { token },
+    select: {
+      id: true,
+      status: true,
+      scope: true,
+      workspaceId: true,
+      projectId: true,
+    },
+  });
+
+  function redirectToInvitationTarget(inviteStatus: string) {
+    if (invitation?.scope === 'WORKSPACE' && invitation.workspaceId) {
+      redirect(`/workspaces/${invitation.workspaceId}?invite=${inviteStatus}`);
+    }
+    if (invitation?.scope === 'PROJECT' && invitation.projectId) {
+      redirect(`/projects/${invitation.projectId}?invite=${inviteStatus}`);
+    }
+  }
+
   const userEmail = session.user.email?.toLowerCase().trim();
   if (!userEmail) {
     redirect('/dashboard?invite=invalid_email');
@@ -35,13 +56,20 @@ export default async function InvitationAcceptPage({ searchParams }: InvitationA
   });
 
   if (result === 'accepted') {
+    redirectToInvitationTarget('accepted');
     redirect('/dashboard?invite=accepted');
   }
   if (result === 'expired') {
+    redirectToInvitationTarget('expired');
     redirect('/dashboard?invite=expired');
   }
   if (result === 'forbidden') {
     redirect('/dashboard?invite=wrong_account');
   }
+
+  if (result === 'not_found' && invitation?.status === 'ACCEPTED') {
+    redirectToInvitationTarget('already_accepted');
+  }
+
   redirect('/dashboard?invite=not_found');
 }

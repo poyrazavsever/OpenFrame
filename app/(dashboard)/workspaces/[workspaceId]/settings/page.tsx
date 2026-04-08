@@ -8,10 +8,10 @@ interface WorkspaceSettingsPageProps {
 export default async function WorkspaceSettingsPage({ params }: WorkspaceSettingsPageProps) {
   const { workspaceId } = await params;
 
-  await requireWorkspaceAccessOrRedirect({
+  const { access } = await requireWorkspaceAccessOrRedirect({
     workspaceId,
     intent: 'manage',
   });
 
-  return <WorkspaceSettingsPageClient workspaceId={workspaceId} />;
+  return <WorkspaceSettingsPageClient workspaceId={workspaceId} canDelete={access.canDelete} />;
 }

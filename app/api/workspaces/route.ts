@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { rateLimit } from '@/lib/rate-limit';
+import { buildBillingAccessWhereInput, getWorkspaceCreationEligibility } from '@/lib/billing';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 
 // GET /api/workspaces - List all workspaces for the authenticated user
@@ -39,8 +40,8 @@ export async function GET(request: NextRequest) {
 
         const where = {
             OR: [
-                { ownerId: session.user.id },
-                { members: { some: { userId: session.user.id } } },
+                { ownerId: session.user.id, owner: buildBillingAccessWhereInput() },
+                { members: { some: { userId: session.user.id } }, owner: buildBillingAccessWhereInput() },
             ],
         };
 
@@ -86,6 +87,13 @@ export async function POST(request: NextRequest) {
 
         if (!session?.user?.id) {
             return apiErrors.unauthorized();
+        }
+
+        const billing = await getWorkspaceCreationEligibility(session.user.id);
+        if (!billing.canCreateWorkspace) {
+            return apiErrors.forbidden(
+                billing.reason || 'Upgrade your account to create another workspace'
+            );
         }
 
         const body = await request.json();

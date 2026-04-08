@@ -1,11 +1,13 @@
 import { notFound, redirect } from 'next/navigation';
 import { auth, checkProjectAccess, checkWorkspaceAccess } from '@/lib/auth';
+import { hasBillingAccess } from '@/lib/billing';
 import { db } from '@/lib/db';
 
 type AccessIntent = 'view' | 'manage';
 
 const LOGIN_REDIRECT = '/login';
 const FORBIDDEN_REDIRECT = '/dashboard';
+const BILLING_REDIRECT = '/settings';
 
 function redirectForMissingAuth() {
   redirect(LOGIN_REDIRECT);
@@ -13,6 +15,10 @@ function redirectForMissingAuth() {
 
 function redirectForForbidden() {
   redirect(FORBIDDEN_REDIRECT);
+}
+
+function redirectForBilling() {
+  redirect(BILLING_REDIRECT);
 }
 
 function ensureGuestPolicy(options: { userId?: string; intent: AccessIntent; allowPublicView: boolean }) {
@@ -60,6 +66,92 @@ export async function requireAuthOrRedirect() {
   return session;
 }
 
+export async function requireBillingAccessOrRedirect(options?: {
+  userId?: string;
+}) {
+  const resolvedUserId = options?.userId ?? (await auth())?.user?.id;
+
+  if (!resolvedUserId) {
+    redirectForMissingAuth();
+  }
+
+  const user = await db.user.findUnique({
+    where: { id: resolvedUserId },
+    select: {
+      subscriptionStatus: true,
+      trialEndsAt: true,
+      stripeCurrentPeriodEnd: true,
+      billingAccessEndedAt: true,
+    },
+  });
+
+  if (!user || !hasBillingAccess(user)) {
+    redirectForBilling();
+  }
+
+  return user;
+}
+
+export async function hasCollaboratorBillingBackedAccess(userId: string) {
+  const now = new Date();
+
+  const [workspaceCount, projectCount] = await Promise.all([
+    db.workspace.count({
+      where: {
+        owner: {
+          OR: [
+            { subscriptionStatus: { in: ['ACTIVE', 'TRIALING'] } },
+            { trialEndsAt: { gt: now } },
+            { stripeCurrentPeriodEnd: { gt: now } },
+          ],
+        },
+        OR: [
+          { ownerId: userId },
+          { members: { some: { userId } } },
+        ],
+      },
+    }),
+    db.project.count({
+      where: {
+        workspace: {
+          owner: {
+            OR: [
+              { subscriptionStatus: { in: ['ACTIVE', 'TRIALING'] } },
+              { trialEndsAt: { gt: now } },
+              { stripeCurrentPeriodEnd: { gt: now } },
+            ],
+          },
+        },
+        OR: [
+          { ownerId: userId },
+          { members: { some: { userId } } },
+          { workspace: { members: { some: { userId } } } },
+        ],
+      },
+    }),
+  ]);
+
+  return workspaceCount > 0 || projectCount > 0;
+}
+
+export async function hasAppNavigationAccess(userId: string) {
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: {
+      subscriptionStatus: true,
+      trialEndsAt: true,
+      stripeCurrentPeriodEnd: true,
+      billingAccessEndedAt: true,
+    },
+  });
+
+  if (user && hasBillingAccess(user)) {
+    return true;
+  }
+
+  return hasCollaboratorBillingBackedAccess(userId);
+}
+
 export async function requireWorkspaceAccessOrRedirect(options: {
   workspaceId: string;
   userId?: string;
@@ -84,10 +176,16 @@ export async function requireWorkspaceAccessOrRedirect(options: {
   const access = await checkWorkspaceAccess(workspace, resolvedUserId);
 
   if (!access.hasAccess) {
+    if (!access.ownerBillingActive) {
+      redirectForBilling();
+    }
     redirectForForbidden();
   }
 
   if (intent === 'manage' && !access.canEdit) {
+    if (!access.ownerBillingActive) {
+      redirectForBilling();
+    }
     redirectForForbidden();
   }
 

@@ -2,7 +2,9 @@ import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
+import { hasCollaboratorBillingBackedAccess, requireBillingAccessOrRedirect } from '@/lib/route-access';
 import { DashboardClient } from './dashboard-client';
+import { buildBillingAccessWhereInput } from '@/lib/billing';
 
 export default async function DashboardPage({
     searchParams,
@@ -12,6 +14,11 @@ export default async function DashboardPage({
     const session = await auth();
     if (!session?.user?.id) {
         redirect('/login');
+    }
+
+    const hasCollaboratorAccess = await hasCollaboratorBillingBackedAccess(session.user.id);
+    if (!hasCollaboratorAccess) {
+        await requireBillingAccessOrRedirect({ userId: session.user.id });
     }
 
     const userOnboarding = await db.user.findUnique({
@@ -37,6 +44,7 @@ export default async function DashboardPage({
             { members: { some: { userId: session.user.id } } },
             {
                 workspace: {
+                    owner: buildBillingAccessWhereInput(),
                     OR: [
                         { ownerId: session.user.id },
                         { members: { some: { userId: session.user.id } } },
@@ -44,6 +52,9 @@ export default async function DashboardPage({
                 },
             },
         ],
+        workspace: {
+            owner: buildBillingAccessWhereInput(),
+        },
     };
 
     // Build unique workspace list for filter (Needs an unbounded list of accessible workspaces)
