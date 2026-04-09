@@ -70,7 +70,15 @@ export const AnnotationCanvas = forwardRef<AnnotationCanvasHandle, AnnotationCan
         if (active) draw(active);
     }, []);
 
-    // Resize canvas to match container
+    // Keep a stable ref to the latest strokes/currentStroke so the resize
+    // handler can redraw without being listed as a dependency (which would
+    // re-register the listener on every stroke change).
+    const strokesRef = useRef(strokes);
+    const currentStrokeRef = useRef(currentStroke);
+    useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+    useEffect(() => { currentStrokeRef.current = currentStroke; }, [currentStroke]);
+
+    // Resize canvas to match container — listener registered once, never re-added.
     useEffect(() => {
         const resizeCanvas = () => {
             const canvas = canvasRef.current;
@@ -82,13 +90,13 @@ export const AnnotationCanvas = forwardRef<AnnotationCanvasHandle, AnnotationCan
             canvas.height = rect.height;
 
             const ctx = canvas.getContext('2d');
-            if (ctx) renderStrokes(ctx, canvas, strokes, currentStroke);
+            if (ctx) renderStrokes(ctx, canvas, strokesRef.current, currentStrokeRef.current);
         };
 
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
         return () => window.removeEventListener('resize', resizeCanvas);
-    }, [strokes, currentStroke, renderStrokes]);
+    }, [renderStrokes]); // renderStrokes is stable (useCallback with no deps that change)
 
     // Re-render on stroke changes
     useEffect(() => {
