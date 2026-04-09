@@ -39,6 +39,7 @@ type BunnyDownloadSourceCacheRecord = {
   expiresAt: number;
 };
 
+const BUNNY_SOURCE_CACHE_MAX_ENTRIES = 500;
 const bunnyDownloadSourceCache = new Map<string, BunnyDownloadSourceCacheRecord>();
 
 function sanitizeFileName(value: string): string {
@@ -95,6 +96,11 @@ function getCachedBunnyDownloadSource(cacheKey: string, now: number): BunnyDownl
 }
 
 function setCachedBunnyDownloadSource(cacheKey: string, source: BunnyDownloadSource | null, now: number): void {
+  if (bunnyDownloadSourceCache.size >= BUNNY_SOURCE_CACHE_MAX_ENTRIES) {
+    // Evict the oldest entry (Maps preserve insertion order)
+    const firstKey = bunnyDownloadSourceCache.keys().next().value;
+    if (firstKey !== undefined) bunnyDownloadSourceCache.delete(firstKey);
+  }
   bunnyDownloadSourceCache.set(cacheKey, {
     source,
     expiresAt: now + BUNNY_SOURCE_RESOLUTION_CACHE_TTL_MS,
