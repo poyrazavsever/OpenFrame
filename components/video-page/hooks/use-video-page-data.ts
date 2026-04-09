@@ -38,20 +38,38 @@ export function useVideoPageData({
       if (etag) headers['If-None-Match'] = etag;
     }
 
-    const res = await fetch(`/api/versions/${versionId}/comments?includeResolved=true`, {
-      cache: 'no-store',
-      headers,
-    });
+    const LIMIT = 200;
+    let offset = 0;
+    let allComments: Comment[] = [];
+    let latestEtag: string | null = null;
 
-    if (res.status === 304) return;
-    if (!res.ok) return;
+    // Fetch pages until we have all comments
+    while (true) {
+      const res = await fetch(
+        `/api/versions/${versionId}/comments?includeResolved=true&limit=${LIMIT}&offset=${offset}`,
+        { cache: 'no-store', headers: offset === 0 ? headers : {} }
+      );
 
-    const etag = res.headers.get('etag');
-    if (etag) commentsEtagRef.current.set(versionId, etag);
+      if (offset === 0 && res.status === 304) return;
+      if (!res.ok) return;
 
-    const payload = await res.json();
-    const commentsList = payload?.data?.comments;
-    if (!Array.isArray(commentsList)) return;
+      if (offset === 0) {
+        latestEtag = res.headers.get('etag');
+      }
+
+      const payload = await res.json();
+      const page: Comment[] = payload?.data?.comments;
+      if (!Array.isArray(page)) return;
+
+      allComments = allComments.concat(page);
+
+      if (!payload?.data?.hasMore) break;
+      offset += LIMIT;
+    }
+
+    if (latestEtag) commentsEtagRef.current.set(versionId, latestEtag);
+
+    const commentsList = allComments;
 
     setVideo((prev) => {
       if (!prev) return prev;

@@ -83,15 +83,23 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
         const { searchParams } = new URL(request.url);
         const includeResolved = searchParams.get('includeResolved') !== 'false';
+        const limit = Math.min(Math.max(1, parseInt(searchParams.get('limit') ?? '200', 10)), 500);
+        const offset = Math.max(0, parseInt(searchParams.get('offset') ?? '0', 10));
 
-        const commentsRevision = await db.comment.aggregate({
-            where: {
-                versionId,
-                ...(includeResolved ? {} : { isResolved: false }),
-            },
-            _count: { id: true },
-            _max: { updatedAt: true },
-        });
+        const commentsFilter = {
+            versionId,
+            parentId: null as null,
+            ...(includeResolved ? {} : { isResolved: false }),
+        };
+
+        const [commentsRevision, total] = await Promise.all([
+            db.comment.aggregate({
+                where: { versionId, ...(includeResolved ? {} : { isResolved: false }) },
+                _count: { id: true },
+                _max: { updatedAt: true },
+            }),
+            db.comment.count({ where: commentsFilter }),
+        ]);
 
         const etag = `"comments:${versionId}:${includeResolved ? 1 : 0}:${commentsRevision._count.id}:${commentsRevision._max.updatedAt?.getTime() ?? 0}"`;
         const ifNoneMatch = request.headers.get('if-none-match');
@@ -109,12 +117,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         }
 
         const comments = await db.comment.findMany({
-            where: {
-                versionId,
-                parentId: null, // Only top-level comments
-                ...(includeResolved ? {} : { isResolved: false }),
-            },
+            where: commentsFilter,
             orderBy: { timestamp: 'asc' },
+            skip: offset,
+            take: limit,
             select: {
                 id: true,
                 content: true,
@@ -162,7 +168,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             },
         });
 
-        const response = successResponse({ comments });
+        const response = successResponse({
+            comments,
+            total,
+            hasMore: offset + comments.length < total,
+            offset,
+            limit,
+        });
         response.headers.set('ETag', etag);
         return withCacheControl(response, 'private, no-cache');
     } catch (error) {
