@@ -112,6 +112,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const body = await request.json();
         const { name, description, visibility } = body;
 
+        const VALID_VISIBILITY = ['PRIVATE', 'INVITE', 'PUBLIC'] as const;
+        if (visibility !== undefined && !VALID_VISIBILITY.includes(visibility)) {
+            return apiErrors.badRequest('Invalid visibility value');
+        }
+
         const updateData: Record<string, unknown> = {};
         if (name !== undefined) updateData.name = name.trim();
         if (description !== undefined) updateData.description = description?.trim() || null;
