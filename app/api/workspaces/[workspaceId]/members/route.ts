@@ -206,7 +206,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             workspaceId,
         });
 
-        const invitationUrl = buildInvitationUrl(invitation.token, normalizedEmail);
+        const invitationUrl = buildInvitationUrl(invitation.token);
         void sendInvitationEmail({
             to: normalizedEmail,
             inviterName: session.user.name || 'A team member',

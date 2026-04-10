@@ -39,11 +39,10 @@ function scopeLabel(scope: InvitationScope): string {
   return scope === 'WORKSPACE' ? 'workspace' : 'project';
 }
 
-export function buildInvitationUrl(token: string, email: string): string {
+export function buildInvitationUrl(token: string): string {
   const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
   const url = new URL('/invitations/accept', baseUrl);
   url.searchParams.set('token', token);
-  url.searchParams.set('email', email);
   return url.toString();
 }
 

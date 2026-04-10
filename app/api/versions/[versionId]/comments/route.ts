@@ -87,7 +87,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { searchParams } = new URL(request.url);
         const includeResolved = searchParams.get('includeResolved') !== 'false';
         const limit = Math.min(Math.max(1, parseInt(searchParams.get('limit') ?? '200', 10)), 500);
-        const offset = Math.max(0, parseInt(searchParams.get('offset') ?? '0', 10));
+        const offset = Math.min(Math.max(0, parseInt(searchParams.get('offset') ?? '0', 10)), 50000);
 
         const commentsFilter = {
             versionId,

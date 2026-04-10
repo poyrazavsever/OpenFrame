@@ -6,7 +6,6 @@ import { acceptInvitationTokenForUser } from '@/lib/invitations';
 interface InvitationAcceptPageProps {
   searchParams: Promise<{
     token?: string;
-    email?: string;
   }>;
 }
 
