@@ -2,7 +2,8 @@ import { unstable_cache } from 'next/cache';
 import { db } from '@/lib/db';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { ListObjectsV2Command, type ListObjectsV2CommandInput } from '@aws-sdk/client-s3';
-import { isBunnyUploadsFeatureEnabled } from '@/lib/feature-flags';
+import { isBunnyUploadsFeatureEnabled, isStripeBillingEnabled } from '@/lib/feature-flags';
+import { getStripe, getStripePriceId } from '@/lib/stripe';
 import { logError } from '@/lib/logger';
 
 const BUNNY_API_BASE = 'https://video.bunnycdn.com';
@@ -407,3 +408,62 @@ export const getCachedUserDownloadEgress = unstable_cache(
     ['admin-user-download-egress'],
     { revalidate: STORAGE_CACHE_SECONDS }
 );
+
+export interface StripeStats {
+    activeSubscribers: number;
+    trialingUsers: number;
+    pastDueUsers: number;
+    canceledUsers: number;
+    freeUsers: number;
+    mrrCents: number;
+    currency: string;
+}
+
+const STRIPE_STATS_CACHE_SECONDS = 300;
+
+export const getCachedStripeStats = unstable_cache(
+    async (): Promise<StripeStats | null> => {
+        if (!isStripeBillingEnabled()) return null;
+
+        try {
+            const statusCounts = await db.user.groupBy({
+                by: ['subscriptionStatus'],
+                _count: { id: true },
+            });
+
+            const counts: Record<string, number> = {};
+            for (const row of statusCounts) {
+                const key = row.subscriptionStatus ?? 'UNKNOWN';
+                counts[key] = row._count.id;
+            }
+
+            const activeSubscribers = counts['ACTIVE'] ?? 0;
+            const trialingUsers = counts['TRIALING'] ?? 0;
+            const pastDueUsers = counts['PAST_DUE'] ?? 0;
+            const canceledUsers = counts['CANCELED'] ?? 0;
+            const freeUsers = counts['FREE'] ?? 0;
+
+            let mrrCents = 0;
+            let currency = 'usd';
+
+            try {
+                const stripe = getStripe();
+                const priceId = getStripePriceId();
+                const price = await stripe.prices.retrieve(priceId);
+                const unitAmount = price.unit_amount ?? 0;
+                currency = price.currency ?? 'usd';
+                mrrCents = activeSubscribers * unitAmount;
+            } catch (err) {
+                logError('Failed to fetch Stripe price for MRR calculation:', err);
+            }
+
+            return { activeSubscribers, trialingUsers, pastDueUsers, canceledUsers, freeUsers, mrrCents, currency };
+        } catch (err) {
+            logError('Failed to fetch Stripe stats:', err);
+            return null;
+        }
+    },
+    ['admin-stripe-stats'],
+    { revalidate: STRIPE_STATS_CACHE_SECONDS }
+);
+

@@ -1,12 +1,12 @@
 import { Metadata } from 'next';
 import { db } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { isBunnyUploadsFeatureEnabled } from '@/lib/feature-flags';
+import { isBunnyUploadsFeatureEnabled, isStripeBillingEnabled } from '@/lib/feature-flags';
 import { redirect } from 'next/navigation';
-import { getCachedBunnyStorageStats, getCachedTotalStorage } from '@/lib/admin-stats';
+import { getCachedBunnyStorageStats, getCachedTotalStorage, getCachedStripeStats } from '@/lib/admin-stats';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RefreshR2StatsButton } from '@/components/admin/refresh-r2-stats-button';
-import { Users, Folder, Video, MessageSquare, Mic, HardDrive, Image as ImageIcon, Film, MessageSquareQuote, Star } from 'lucide-react';
+import { Users, Folder, Video, MessageSquare, Mic, HardDrive, Image as ImageIcon, Film, MessageSquareQuote, Star, CreditCard, TrendingUp, UserCheck, AlertCircle, UserX } from 'lucide-react';
 
 export const metadata: Metadata = {
     title: 'Admin Dashboard | OpenFrame',
@@ -21,6 +21,16 @@ function formatBytes(bytes: number, decimals = 2) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+function formatMrr(cents: number, currency: string) {
+    const safeCurrency = /^[a-zA-Z]{3}$/.test(currency) ? currency.toUpperCase() : 'USD';
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: safeCurrency,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(cents / 100);
 }
 
 export default async function AdminDashboardPage() {
@@ -72,9 +82,10 @@ export default async function AdminDashboardPage() {
     }
 
     // 2. Storage Stats (Cached)
-    const [totalStorageBytes, bunnyStorageStats] = await Promise.all([
+    const [totalStorageBytes, bunnyStorageStats, stripeStats] = await Promise.all([
         getCachedTotalStorage(),
         getCachedBunnyStorageStats(),
+        getCachedStripeStats(),
     ]);
 
     return (
@@ -180,6 +191,69 @@ export default async function AdminDashboardPage() {
                     </CardContent>
                 </Card>
             </div>
+
+            {isStripeBillingEnabled() && stripeStats && (
+                <>
+                    <h3 className="text-xl font-semibold tracking-tight pt-2">Billing &amp; Revenue</h3>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        <Card>
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium">Monthly Recurring Revenue</CardTitle>
+                                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold">{formatMrr(stripeStats.mrrCents, stripeStats.currency)}</div>
+                                <p className="text-xs text-muted-foreground">Based on active subscriptions</p>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium">Active Subscribers</CardTitle>
+                                <UserCheck className="h-4 w-4 text-muted-foreground" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold">{stripeStats.activeSubscribers}</div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium">On Trial</CardTitle>
+                                <CreditCard className="h-4 w-4 text-muted-foreground" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold">{stripeStats.trialingUsers}</div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium">Free Users</CardTitle>
+                                <Users className="h-4 w-4 text-muted-foreground" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold">{stripeStats.freeUsers}</div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium">Past Due</CardTitle>
+                                <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold">{stripeStats.pastDueUsers}</div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium">Canceled</CardTitle>
+                                <UserX className="h-4 w-4 text-muted-foreground" />
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold">{stripeStats.canceledUsers}</div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                </>
+            )}
         </div>
     );
 }
