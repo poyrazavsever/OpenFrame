@@ -73,7 +73,7 @@ const workflowAcceleratorFeatures = [
   },
   {
     title: 'Real-time Webhooks',
-    description: 'Get instant Telegram or Slack alerts the second a comment is dropped.',
+    description: 'Get instant Telegram alerts the second a comment is dropped. More integrations coming soon.',
     icon: BellRing,
   },
   {
@@ -611,7 +611,7 @@ export function LandingPage({ isLoggedIn }: LandingPageProps) {
                   },
                   {
                     q: 'What happens if I exceed my storage?',
-                    a: 'You can add 100 GB for $5/mo. If you need much more, contact us and we’ll help you choose the best setup.',
+                    a: 'You can add 100 GB for $5/mo. If you need much more, contact us at info@open-frame.net and we\'ll help you choose the best setup.',
                   },
                   {
                     q: 'How is YouTube unlimited?',
