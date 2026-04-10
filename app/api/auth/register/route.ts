@@ -6,6 +6,7 @@ import { checkRateLimit, getClientIp, rateLimitHeaders, RATE_LIMIT_CONFIGS } fro
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { isInviteCodeRequired } from '@/lib/feature-flags';
 import { logError } from '@/lib/logger';
+import { createVerificationToken, isEmailVerificationEnabled, sendVerificationEmail } from '@/lib/email-verification';
 
 export async function POST(request: NextRequest) {
     try {
@@ -89,12 +90,16 @@ export async function POST(request: NextRequest) {
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 12);
 
+        // If SMTP is not configured, auto-verify the email so users aren't locked out
+        const emailVerificationRequired = isEmailVerificationEnabled();
+
         // Create user
         const user = await db.user.create({
             data: {
                 name: name.trim(),
                 email: normalizedEmail,
                 password: hashedPassword,
+                emailVerified: emailVerificationRequired ? null : new Date(),
             },
             select: {
                 id: true,
@@ -116,8 +121,18 @@ export async function POST(request: NextRequest) {
             }
         }
 
+        // Send verification email if SMTP is configured
+        if (emailVerificationRequired) {
+            const verificationToken = await createVerificationToken(normalizedEmail);
+            await sendVerificationEmail(normalizedEmail, verificationToken);
+        }
+
+        const message = emailVerificationRequired
+            ? 'Account created. Please check your email to verify your address before signing in.'
+            : 'Account created successfully';
+
         const response = successResponse(
-            { message: 'Account created successfully', user },
+            { message, user, emailVerificationRequired },
             201
         );
 

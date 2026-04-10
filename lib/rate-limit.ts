@@ -70,6 +70,10 @@ export const RATE_LIMIT_CONFIGS: Record<string, RateLimitConfig> = {
     'video-download':         { windowMs: 60 * 1000, maxRequests: 8 },  // 8 per minute
     'video-download-prepare': { windowMs: 60 * 1000, maxRequests: 5 },  // 5 per minute
 
+    // Email verification
+    'verify-email':        { windowMs: 15 * 60 * 1000, maxRequests: 20 },  // 20 per 15 min (clicked link)
+    'resend-verification': { windowMs: 60 * 60 * 1000, maxRequests: 5 },   // 5 per hour
+
     // Onboarding — one-time action, very strict
     'onboarding-complete': { windowMs: 60 * 60 * 1000, maxRequests: 5 }, // 5 per hour
 

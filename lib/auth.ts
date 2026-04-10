@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 import { ProjectMemberRole, WorkspaceMemberRole } from '@prisma/client';
 import { hasBillingAccess } from '@/lib/billing';
 import { isInviteCodeRequired } from '@/lib/feature-flags';
+import { isEmailVerificationEnabled } from '@/lib/email-verification';
 
 // Dummy hash for timing-safe comparison when user doesn't exist
 // This prevents user enumeration via timing attacks
@@ -44,6 +45,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         // Only return user if they exist AND password is valid
         if (!user || !user.password || !isValidPassword) {
+          return null;
+        }
+
+        // Block sign-in when email verification is required but not yet completed
+        if (isEmailVerificationEnabled() && !user.emailVerified) {
           return null;
         }
 

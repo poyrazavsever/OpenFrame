@@ -28,6 +28,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   OAuthAccountNotLinked: 'Sign-in failed. Please try a different method or contact support.',
   OAuthCallbackError: 'OAuth sign-in failed. Please try again.',
   OAuthEmailNotVerified: 'Your OAuth account email is not verified. Please verify it with your provider and try again.',
+  InvalidVerificationToken: 'The verification link is invalid or has expired.',
+  VerificationFailed: 'Email verification failed. Please try again.',
   Default: 'Something went wrong. Please try again.',
 };
 
@@ -45,11 +47,15 @@ function LoginFormInner({ googleEnabled, githubEnabled }: LoginFormInnerProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
+  const [showVerifiedSuccess, setShowVerifiedSuccess] = useState(false);
   const callbackUrl = getSafeCallbackUrl(searchParams.get('callbackUrl'));
 
   useEffect(() => {
     if (searchParams.get('registered') === 'true') {
       setShowSuccess(true);
+    }
+    if (searchParams.get('verified') === 'true') {
+      setShowVerifiedSuccess(true);
     }
     const errorCode = searchParams.get('error');
     if (errorCode) {
@@ -103,7 +109,13 @@ function LoginFormInner({ googleEnabled, githubEnabled }: LoginFormInnerProps) {
       <CardContent>
         {showSuccess && (
           <div className="p-3 rounded-md bg-green-500/10 text-green-600 text-sm mb-4">
-            Account created successfully! Please sign in.
+            Account created successfully! Please check your email to verify your address before signing in.
+          </div>
+        )}
+
+        {showVerifiedSuccess && (
+          <div className="p-3 rounded-md bg-green-500/10 text-green-600 text-sm mb-4">
+            Email verified successfully! You can now sign in.
           </div>
         )}
 

@@ -87,7 +87,11 @@ export default function RegisterPageClient({ requireInviteCode, googleEnabled, g
         return;
       }
 
-      router.push('/login?registered=true');
+      if (data.data?.emailVerificationRequired) {
+        router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+      } else {
+        router.push('/login?registered=true');
+      }
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
