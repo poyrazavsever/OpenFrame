@@ -261,6 +261,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (guestName !== undefined && guestName !== null && String(guestName).length > 100) {
             return apiErrors.badRequest('Guest name must be 100 characters or fewer');
         }
+        if (guestEmail !== undefined && guestEmail !== null) {
+            const emailStr = String(guestEmail);
+            if (emailStr.length > 254) {
+                return apiErrors.badRequest('Guest email must be 254 characters or fewer');
+            }
+            // RFC 5321 / HTML5 email pattern — simple but sufficient for a stored-value guard
+            const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRe.test(emailStr)) {
+                return apiErrors.badRequest('Guest email must be a valid email address');
+            }
+        }
 
         // Validate annotation data structure to prevent prototype pollution and stored XSS.
         // Reject anything that is not a well-formed array of AnnotationStroke objects.
