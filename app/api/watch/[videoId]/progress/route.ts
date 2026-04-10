@@ -85,8 +85,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const body = await request.json();
         const { progress, duration, versionId } = body;
 
-        if (typeof progress !== 'number' || progress < 0) {
+        if (typeof progress !== 'number' || !isFinite(progress) || progress < 0) {
             return apiErrors.badRequest('Invalid progress value');
+        }
+
+        if (duration !== undefined && (typeof duration !== 'number' || !isFinite(duration) || duration < 0)) {
+            return apiErrors.badRequest('Invalid duration value');
         }
 
         if (versionId !== undefined && typeof versionId !== 'string') {

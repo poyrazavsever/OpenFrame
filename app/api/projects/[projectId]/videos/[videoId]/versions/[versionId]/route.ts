@@ -55,6 +55,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const body = await request.json();
         const { duration, versionLabel, isActive } = body;
 
+        if (duration !== undefined && (typeof duration !== 'number' || !isFinite(duration) || duration < 0)) {
+            return apiErrors.badRequest('Invalid duration value');
+        }
+
         const updateData: Record<string, unknown> = {};
         if (duration !== undefined) updateData.duration = duration;
         if (versionLabel !== undefined) updateData.versionLabel = versionLabel?.trim() || null;
