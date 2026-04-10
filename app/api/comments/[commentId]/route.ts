@@ -276,18 +276,22 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             return apiErrors.notFound('Comment');
         }
 
+        const project = comment.version.video.project;
         const userId = session?.user?.id ?? null;
         const isAuthor = !!userId && comment.authorId === userId;
 
-        let canDeleteOwnComment = isAuthor;
-        if (!userId) {
+        // Project owners/admins and workspace admins can delete any comment
+        const access = userId ? await checkProjectAccess(project, userId, { intent: 'manage' }) : null;
+        const isPrivilegedUser = !!access?.canEdit;
+
+        let canDelete = isAuthor || isPrivilegedUser;
+        if (!canDelete && !userId) {
             const guestIdentityId = getGuestIdentityFromRequest(request);
             const isGuestAuthor = !comment.authorId
                 && !!comment.guestIdentityId
                 && guestIdentityId === comment.guestIdentityId;
 
             if (isGuestAuthor) {
-                const project = comment.version.video.project;
                 const shareSession = getShareSessionFromRequest(request, comment.version.video.id);
                 const shareAccess = shareSession
                     ? await validateShareLinkAccess({
@@ -302,12 +306,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
                 if (!hasGuestAccess) {
                     return apiErrors.forbidden('Access denied');
                 }
-                canDeleteOwnComment = true;
+                canDelete = true;
             }
         }
 
-        if (!canDeleteOwnComment) {
-            return apiErrors.forbidden('You can only delete your own comments');
+        if (!canDelete) {
+            return apiErrors.forbidden('You do not have permission to delete this comment');
         }
 
         // Collect all media URLs to delete from R2 (comment + its replies)
