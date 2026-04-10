@@ -70,6 +70,9 @@ export const RATE_LIMIT_CONFIGS: Record<string, RateLimitConfig> = {
     'video-download':         { windowMs: 60 * 1000, maxRequests: 8 },  // 8 per minute
     'video-download-prepare': { windowMs: 60 * 1000, maxRequests: 5 },  // 5 per minute
 
+    // Onboarding — one-time action, very strict
+    'onboarding-complete': { windowMs: 60 * 60 * 1000, maxRequests: 5 }, // 5 per hour
+
     // Member management
     'invite-member':  { windowMs: 60 * 60 * 1000, maxRequests: 30 },    // 30 per hour
     'manage-member':  { windowMs: 60 * 1000, maxRequests: 20 },         // 20 per minute
