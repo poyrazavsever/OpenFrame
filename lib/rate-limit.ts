@@ -150,33 +150,50 @@ function isPlausibleIp(value: string): boolean {
 /**
  * Get client IP from request headers.
  *
- * Header priority:
- *  1. cf-connecting-ip  — set by Cloudflare (trusted proxy); cannot be spoofed by clients
- *  2. x-forwarded-for   — first entry, trusted only behind a proxy that overwrites it
- *  3. x-real-ip         — set by some reverse proxies (Nginx)
- *  4. 127.0.0.1         — local development fallback
+ * Trusting proxy-injected headers is only safe when a known trusted proxy sits in front
+ * of this server and strips or overwrites those headers before forwarding requests.
+ * Set TRUSTED_PROXY_MODE to opt in:
  *
- * Deployed behind Cloudflare, so cf-connecting-ip is the canonical source.
+ *   TRUSTED_PROXY_MODE=cloudflare  — trust cf-connecting-ip (Cloudflare edge)
+ *   TRUSTED_PROXY_MODE=nginx       — trust x-real-ip / x-forwarded-for (Nginx real_ip_header)
+ *
+ * Without TRUSTED_PROXY_MODE set, no proxy headers are trusted: all requests appear
+ * as 127.0.0.1, which means rate limits apply per-process rather than per-client IP.
+ * In that configuration, prefer session/user-keyed rate limits for authenticated endpoints.
+ *
+ * WARNING: Do not set TRUSTED_PROXY_MODE unless you have confirmed that your proxy
+ * strips or overwrites the corresponding headers on every inbound request. Failing to
+ * do so allows clients to spoof their IP and bypass rate limits.
  */
 export function getClientIp(request: Request): string {
-    // Cloudflare always sets this to the true client IP
-    const cfIp = request.headers.get('cf-connecting-ip');
-    if (cfIp && isPlausibleIp(cfIp)) {
-        return cfIp;
+    const mode = process.env.TRUSTED_PROXY_MODE?.trim().toLowerCase();
+
+    if (mode === 'cloudflare') {
+        // cf-connecting-ip is injected by Cloudflare and cannot be set by clients
+        // when origin access is restricted to Cloudflare's IP ranges.
+        const cfIp = request.headers.get('cf-connecting-ip');
+        if (cfIp && isPlausibleIp(cfIp)) {
+            return cfIp;
+        }
     }
 
-    const forwardedFor = request.headers.get('x-forwarded-for');
-    if (forwardedFor) {
-        const first = forwardedFor.split(',')[0].trim();
-        if (isPlausibleIp(first)) return first;
+    if (mode === 'nginx') {
+        // x-real-ip is set by Nginx's real_ip_header directive (connection-level, not spoofable
+        // by clients when set_real_ip_from is configured for the upstream proxy).
+        const realIp = request.headers.get('x-real-ip');
+        if (realIp && isPlausibleIp(realIp)) return realIp;
+
+        // x-forwarded-for last entry added by Nginx when proxy_add_x_forwarded_for is used.
+        const forwardedFor = request.headers.get('x-forwarded-for');
+        if (forwardedFor) {
+            const entries = forwardedFor.split(',');
+            const last = entries[entries.length - 1].trim();
+            if (isPlausibleIp(last)) return last;
+        }
     }
 
-    const realIp = request.headers.get('x-real-ip');
-    if (realIp && isPlausibleIp(realIp)) {
-        return realIp;
-    }
-
-    // Fallback for local development
+    // No trusted proxy configured — fall back to a constant value.
+    // Rate limiting will apply per-process; use userId-keyed limits for authenticated endpoints.
     return '127.0.0.1';
 }
 

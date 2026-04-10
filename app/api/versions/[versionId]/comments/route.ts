@@ -10,6 +10,7 @@ import { HeadObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { ensureGuestIdentityFromRequest, getGuestIdentityFromRequest, setGuestIdentityCookie } from '@/lib/guest-identity';
 import { extractImageFileNameFromProxyUrl, sanitizeAssetDisplayName } from '@/lib/video-assets';
+import { validateAnnotationStrokes } from '@/lib/validation';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
 const SAFE_IMAGE_PATH = /^\/api\/upload\/image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
@@ -259,8 +260,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (guestName !== undefined && guestName !== null && String(guestName).length > 100) {
             return apiErrors.badRequest('Guest name must be 100 characters or fewer');
         }
-        if (annotationData !== undefined && annotationData !== null && JSON.stringify(annotationData).length > 50_000) {
-            return apiErrors.badRequest('Annotation data is too large');
+
+        // Validate annotation data structure to prevent prototype pollution and stored XSS.
+        // Reject anything that is not a well-formed array of AnnotationStroke objects.
+        let serializedAnnotationData: string | null = null;
+        if (annotationData !== undefined && annotationData !== null) {
+            const validStrokes = validateAnnotationStrokes(annotationData);
+            if (validStrokes === null) {
+                return apiErrors.badRequest('annotationData must be an array of valid stroke objects');
+            }
+            // Re-serialize to canonical JSON — strips any extra properties from the input.
+            serializedAnnotationData = JSON.stringify(validStrokes);
         }
 
         // If replying, verify parent exists in same version
@@ -309,7 +319,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                     voiceUrl: voiceUrl || null,
                     voiceDuration: voiceDuration || null,
                     imageUrl: imageUrl || null,
-                    annotationData: annotationData || null,
+                    annotationData: serializedAnnotationData,
                     authorId: session?.user?.id || null,
                     guestName: isGuest ? guestName : null,
                     guestEmail: isGuest ? guestEmail : null,

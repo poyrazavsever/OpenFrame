@@ -11,6 +11,7 @@ import type {
   PlayerAdapter,
   Version,
 } from '@/components/video-page/types';
+import { validateAnnotationStrokes } from '@/lib/validation';
 
 interface UseVideoPlayerParams {
   activeVersion: Version | undefined;
@@ -765,8 +766,9 @@ export function useVideoPlayer({
     }
     if (annotation) {
       try {
-        const strokes = JSON.parse(annotation) as AnnotationStroke[];
-        setViewingAnnotation(strokes);
+        const parsed = JSON.parse(annotation);
+        const safe = validateAnnotationStrokes(parsed);
+        setViewingAnnotation(safe as AnnotationStroke[] | null);
       } catch {
         setViewingAnnotation(null);
       }

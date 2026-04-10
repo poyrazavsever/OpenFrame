@@ -13,6 +13,7 @@ import { VideoPageLoading } from '@/components/video-page/video-page-loading';
 import { VideoPageError } from '@/components/video-page/video-page-error';
 import { GuestNameGate } from '@/components/video-page/guest-name-gate';
 import { useCommentMedia } from '@/components/video-page/hooks/use-comment-media';
+import { validateAnnotationStrokes } from '@/lib/validation';
 import { useVersionActions } from '@/components/video-page/hooks/use-version-actions';
 import { useWatchProgress } from '@/components/video-page/hooks/use-watch-progress';
 import { useVideoPlayer } from '@/components/video-page/hooks/use-video-player';
@@ -498,7 +499,8 @@ export function VideoPageContent({
   const editAnnotationInitialStrokes = useMemo<AnnotationStroke[] | undefined>(() => {
     if (editAnnotationData) {
       try {
-        return JSON.parse(editAnnotationData) as AnnotationStroke[];
+        const parsed = JSON.parse(editAnnotationData);
+        return (validateAnnotationStrokes(parsed) as AnnotationStroke[] | null) ?? undefined;
       } catch {
         return undefined;
       }
@@ -507,7 +509,8 @@ export function VideoPageContent({
     const editingComment = comments.find((comment) => comment.id === editingCommentId);
     if (!editingComment?.annotationData) return undefined;
     try {
-      return JSON.parse(editingComment.annotationData) as AnnotationStroke[];
+      const parsed = JSON.parse(editingComment.annotationData);
+      return (validateAnnotationStrokes(parsed) as AnnotationStroke[] | null) ?? undefined;
     } catch {
       return undefined;
     }

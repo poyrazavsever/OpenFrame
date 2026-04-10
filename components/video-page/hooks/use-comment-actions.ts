@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import type { AnnotationCanvasHandle, AnnotationStroke } from '@/components/annotation-canvas';
 import type { Comment, CommentActionsConfig, CommentTag, Version, VideoData } from '@/components/video-page/types';
 import { extractPastedImageFile, validateImageFile } from '@/components/video-page/image-upload-utils';
+import { validateAnnotationStrokes } from '@/lib/validation';
 
 interface UseCommentActionsParams extends CommentActionsConfig {
   setVideo: Dispatch<SetStateAction<VideoData | null>>;
@@ -867,7 +868,9 @@ export function useCommentActions({
         setIsEditingAnnotation(false);
         if (finalAnnotationData !== undefined && finalAnnotationData) {
           try {
-            setViewingAnnotation(JSON.parse(finalAnnotationData));
+            const parsed = JSON.parse(finalAnnotationData);
+            const safe = validateAnnotationStrokes(parsed);
+            if (safe) setViewingAnnotation(safe as AnnotationStroke[]);
           } catch {
             // ignore parse errors
           }

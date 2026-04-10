@@ -9,6 +9,7 @@ import { getShareSessionFromRequest } from '@/lib/share-session';
 import { apiErrors, successResponse, withCacheControl } from '@/lib/api-response';
 import { getGuestIdentityFromRequest } from '@/lib/guest-identity';
 import { runWithConcurrency } from '@/lib/async-pool';
+import { validateAnnotationStrokes } from '@/lib/validation';
 
 const CLEANUP_DELETE_CONCURRENCY = 5;
 
@@ -172,7 +173,17 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const updateData: Record<string, unknown> = {};
         if (content !== undefined && typeof content === 'string') updateData.content = content.trim();
         if (tagId !== undefined) updateData.tagId = tagId;
-        if (annotationData !== undefined) updateData.annotationData = annotationData;
+        if (annotationData !== undefined) {
+            if (annotationData === null) {
+                updateData.annotationData = null;
+            } else {
+                const validStrokes = validateAnnotationStrokes(annotationData);
+                if (validStrokes === null) {
+                    return apiErrors.badRequest('annotationData must be an array of valid stroke objects');
+                }
+                updateData.annotationData = JSON.stringify(validStrokes);
+            }
+        }
         if (isResolved !== undefined) {
             updateData.isResolved = isResolved;
             updateData.resolvedAt = isResolved ? new Date() : null;
