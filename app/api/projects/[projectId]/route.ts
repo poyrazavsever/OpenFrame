@@ -112,6 +112,23 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const body = await request.json();
         const { name, description, visibility } = body;
 
+        if (name !== undefined) {
+            if (typeof name !== 'string' || name.trim().length === 0) {
+                return apiErrors.badRequest('Name must be a non-empty string');
+            }
+            if (name.trim().length > 100) {
+                return apiErrors.badRequest('Name must be 100 characters or fewer');
+            }
+        }
+        if (description !== undefined && description !== null) {
+            if (typeof description !== 'string') {
+                return apiErrors.badRequest('Description must be a string');
+            }
+            if (description.trim().length > 1000) {
+                return apiErrors.badRequest('Description must be 1000 characters or fewer');
+            }
+        }
+
         const VALID_VISIBILITY = ['PRIVATE', 'INVITE', 'PUBLIC'] as const;
         if (visibility !== undefined && !VALID_VISIBILITY.includes(visibility)) {
             return apiErrors.badRequest('Invalid visibility value');

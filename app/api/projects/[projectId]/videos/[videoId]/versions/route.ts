@@ -94,6 +94,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return apiErrors.badRequest('Video URL is required');
         }
 
+        if (versionLabel !== undefined && versionLabel !== null) {
+            if (typeof versionLabel !== 'string') {
+                return apiErrors.badRequest('Version label must be a string');
+            }
+            if (versionLabel.trim().length > 100) {
+                return apiErrors.badRequest('Version label must be 100 characters or fewer');
+            }
+        }
+
         // Validate URLs use safe schemes (http/https only)
         const videoUrlError = validateUrl(videoUrl, 'Video URL');
         if (videoUrlError) {

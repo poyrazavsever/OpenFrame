@@ -108,6 +108,23 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const body = await request.json();
         const { name, description } = body;
 
+        if (name !== undefined) {
+            if (typeof name !== 'string' || name.trim().length === 0) {
+                return apiErrors.badRequest('Name must be a non-empty string');
+            }
+            if (name.trim().length > 100) {
+                return apiErrors.badRequest('Name must be 100 characters or fewer');
+            }
+        }
+        if (description !== undefined && description !== null) {
+            if (typeof description !== 'string') {
+                return apiErrors.badRequest('Description must be a string');
+            }
+            if (description.trim().length > 1000) {
+                return apiErrors.badRequest('Description must be 1000 characters or fewer');
+            }
+        }
+
         const updateData: Record<string, unknown> = {};
         if (name !== undefined) updateData.name = name.trim();
         if (description !== undefined) updateData.description = description?.trim() || null;
