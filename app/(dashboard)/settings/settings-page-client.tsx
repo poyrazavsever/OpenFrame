@@ -401,14 +401,14 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
                 </p>
               ) : null}
 
-              <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
-                <p className="text-sm font-medium">Workspace creation</p>
-                <p className="text-sm text-muted-foreground">
-                  {billing.workspaceCreation.canCreateWorkspace
-                    ? 'This account can create workspaces.'
-                    : billing.workspaceCreation.reason || 'Upgrade to create another workspace.'}
-                </p>
-              </div>
+              {!billing.workspaceCreation.canCreateWorkspace ? (
+                <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+                  <p className="text-sm font-medium">Workspace creation</p>
+                  <p className="text-sm text-muted-foreground">
+                    {billing.workspaceCreation.reason || 'Upgrade to create another workspace.'}
+                  </p>
+                </div>
+              ) : null}
 
               <div className="flex flex-col sm:flex-row gap-3">
                 {billing.subscription.hasActiveSubscription && billing.portalAvailable ? (
