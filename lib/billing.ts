@@ -180,6 +180,7 @@ export async function getWorkspaceCreationEligibility(userId: string) {
       select: {
         subscriptionStatus: true,
         trialEndsAt: true,
+        billingTrialConsumedAt: true,
         stripeCustomerId: true,
         stripeSubscriptionId: true,
         stripePriceId: true,
@@ -251,6 +252,7 @@ export async function getWorkspaceCreationEligibility(userId: string) {
       hasActiveSubscription: hasActiveSubscription(user.subscriptionStatus),
       hasActiveTrial: hasActiveTrial(user.trialEndsAt),
       hasBillingAccess: billingAccess,
+      isTrialEligible: !user.billingTrialConsumedAt,
       stripeCustomerId: user.stripeCustomerId,
       stripeSubscriptionId: user.stripeSubscriptionId,
       stripePriceId: user.stripePriceId,

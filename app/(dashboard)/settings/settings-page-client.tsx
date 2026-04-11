@@ -44,6 +44,7 @@ interface BillingOverview {
     hasActiveSubscription: boolean;
     hasActiveTrial: boolean;
     hasBillingAccess: boolean;
+    isTrialEligible: boolean;
     priceId: string | null;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
@@ -332,6 +333,18 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
             </div>
           ) : (
             <>
+              {!billing.subscription.hasActiveSubscription
+              && !billing.subscription.hasActiveTrial
+              && billing.subscription.isTrialEligible
+              && billing.checkoutAvailable ? (
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-4 space-y-2">
+                  <p className="text-sm font-semibold">Start your 7-day free trial</p>
+                  <p className="text-sm text-muted-foreground">
+                    Get full access to all features — no charge until the trial ends. Cancel anytime.
+                  </p>
+                </div>
+              ) : null}
+
               <div className="flex items-center justify-between rounded-lg border p-4">
                 <div>
                   <p className="text-sm font-medium">Current plan</p>
@@ -344,7 +357,9 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
                         : 'Paid account with workspace creation unlocked.'
                       : billing.subscription.hasActiveTrial
                         ? 'Trial access is active.'
-                        : 'Billing access has ended.'}
+                        : billing.subscription.isTrialEligible
+                          ? 'You haven\'t started your free trial yet.'
+                          : 'Billing access has ended.'}
                   </p>
                 </div>
                 <Badge
@@ -420,6 +435,8 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         Redirecting...
                       </>
+                    ) : billing.subscription.isTrialEligible ? (
+                      'Start Free Trial'
                     ) : (
                       'Upgrade with Stripe'
                     )}
