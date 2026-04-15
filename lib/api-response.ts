@@ -36,6 +36,7 @@ export const HttpStatus = {
   CONFLICT: 409,
   UNPROCESSABLE_ENTITY: 422,
   TOO_MANY_REQUESTS: 429,
+  INSUFFICIENT_STORAGE: 507,
   INTERNAL_SERVER_ERROR: 500,
 } as const;
 
@@ -62,6 +63,9 @@ export const ErrorCode = {
   // Server errors
   INTERNAL_ERROR: "INTERNAL_ERROR",
   SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
+
+  // Storage errors
+  STORAGE_LIMIT_EXCEEDED: "STORAGE_LIMIT_EXCEEDED",
 } as const;
 
 /**
@@ -158,4 +162,7 @@ export const apiErrors = {
 
   internalError: (message = "Internal server error") =>
     errorResponse(message, HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR),
+
+  storageExceeded: (message = "Storage limit exceeded. Please delete some files to free up space.") =>
+    errorResponse(message, HttpStatus.INSUFFICIENT_STORAGE, ErrorCode.STORAGE_LIMIT_EXCEEDED),
 };

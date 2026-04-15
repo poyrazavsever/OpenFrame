@@ -14,6 +14,7 @@ import { isBunnyUploadsFeatureEnabled } from '@/lib/feature-flags';
 import { getShareSessionFromRequest } from '@/lib/share-session';
 import { getVideoAssetAccessContext, SAFE_BUNNY_VIDEO_ID } from '@/lib/video-assets';
 import { logError } from '@/lib/logger';
+import { enforceStorageQuota } from '@/lib/storage-quota';
 
 type RouteParams = { params: Promise<{ videoId: string }> };
 
@@ -35,6 +36,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!isBunnyUploadsFeatureEnabled()) {
       return apiErrors.badRequest('Direct uploads are disabled by this host');
     }
+
+    const billedUserId = context.video.project.workspace.ownerId;
+    const quotaError = await enforceStorageQuota(billedUserId, BigInt(0));
+    if (quotaError) return quotaError;
 
     const shareSession = getShareSessionFromRequest(request, context.video.id);
     if (!context.viewerUserId) {

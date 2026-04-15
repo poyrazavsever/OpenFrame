@@ -7,7 +7,7 @@ import { getStripe, getStripePriceId } from '@/lib/stripe';
 import { logError } from '@/lib/logger';
 
 const BUNNY_API_BASE = 'https://video.bunnycdn.com';
-const STORAGE_CACHE_SECONDS = 600;
+const STORAGE_CACHE_SECONDS = 120;
 
 interface R2StorageSnapshot {
     fileSizes: Map<string, number>;

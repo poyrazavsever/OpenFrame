@@ -14,6 +14,7 @@
 - Use `checkProjectAccess()` / `checkWorkspaceAccess()` for authorization instead of ad-hoc role checks.
 - For API responses, use `successResponse` / `apiErrors` from `@/lib/api-response`.
 - Keep API and UI imports on `@/` aliases when available.
+- In Prisma raw SQL, use `$executeRaw` for statements that return no rows (e.g. `pg_advisory_xact_lock`). Using `$queryRaw` on void-returning functions causes a Prisma deserialization error (`Failed to deserialize column of type 'void'`).
 
 ## Important locations
 - Custom SQL managed by Prisma migrations: `prisma/migrations/*/migration.sql`.

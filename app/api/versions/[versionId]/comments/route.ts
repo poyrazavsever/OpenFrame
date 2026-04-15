@@ -9,18 +9,21 @@ import { getShareSessionFromRequest } from '@/lib/share-session';
 import { HeadObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME } from '@/lib/r2';
 import { ensureGuestIdentityFromRequest, getGuestIdentityFromRequest, setGuestIdentityCookie } from '@/lib/guest-identity';
-import { extractImageFileNameFromProxyUrl, sanitizeAssetDisplayName } from '@/lib/video-assets';
+import { extractImageFileNameFromProxyUrl, extractAudioFileNameFromProxyUrl, sanitizeAssetDisplayName } from '@/lib/video-assets';
 import { validateAnnotationStrokes } from '@/lib/validation';
 import { logError } from '@/lib/logger';
+import { reserveStorageQuota, releaseStorageReservation } from '@/lib/storage-quota';
 
 type RouteParams = { params: Promise<{ versionId: string }> };
 const SAFE_IMAGE_PATH = /^\/api\/upload\/image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 const SAFE_AUDIO_PATH = /^\/api\/upload\/audio\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 const UNATTACHED_UPLOAD_TTL_MS = 15 * 60 * 1000;
 
-async function isFreshAttachment(url: string, kind: 'audio' | 'image'): Promise<boolean> {
+type AttachmentCheck = { isFresh: boolean; sizeBytes: bigint };
+
+async function isFreshAttachment(url: string, kind: 'audio' | 'image'): Promise<AttachmentCheck> {
     const prefix = kind === 'audio' ? '/api/upload/audio/' : '/api/upload/image/';
-    if (!url.startsWith(prefix)) return false;
+    if (!url.startsWith(prefix)) return { isFresh: false, sizeBytes: BigInt(0) };
 
     const filename = url.slice(prefix.length);
     const key = kind === 'audio' ? `voice/${filename}` : `images/${filename}`;
@@ -32,10 +35,11 @@ async function isFreshAttachment(url: string, kind: 'audio' | 'image'): Promise<
                 Key: key,
             })
         );
-        if (!head.LastModified) return false;
-        return Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+        if (!head.LastModified) return { isFresh: false, sizeBytes: BigInt(0) };
+        const isFresh = Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+        return { isFresh, sizeBytes: BigInt(head.ContentLength ?? 0) };
     } catch {
-        return false;
+        return { isFresh: false, sizeBytes: BigInt(0) };
     }
 }
 
@@ -188,6 +192,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 // POST /api/versions/[versionId]/comments
 export async function POST(request: NextRequest, { params }: RouteParams) {
+    let attachmentReservationId: string | null = null;
     try {
         const limited = await rateLimit(request, 'comment');
         if (limited) return limited;
@@ -275,8 +280,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         // Validate annotation data structure to prevent prototype pollution and stored XSS.
         // Reject anything that is not a well-formed array of AnnotationStroke objects.
+        // The HTTP body is already JSON-parsed by Next.js; double-encoded strings are rejected.
         let serializedAnnotationData: string | null = null;
         if (annotationData !== undefined && annotationData !== null) {
+            if (!Array.isArray(annotationData)) {
+                return apiErrors.badRequest('annotationData must be an array of valid stroke objects');
+            }
             const validStrokes = validateAnnotationStrokes(annotationData);
             if (validStrokes === null) {
                 return apiErrors.badRequest('annotationData must be an array of valid stroke objects');
@@ -317,21 +326,45 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (voiceUrl && !SAFE_AUDIO_PATH.test(voiceUrl)) {
             return apiErrors.badRequest('Voice URL must reference an uploaded audio file');
         }
-        if (voiceUrl && !(await isFreshAttachment(voiceUrl, 'audio'))) {
-            return apiErrors.badRequest('Voice upload expired. Please upload again.');
+        let voiceSizeBytes = BigInt(0);
+        if (voiceUrl) {
+            const voiceCheck = await isFreshAttachment(voiceUrl, 'audio');
+            if (!voiceCheck.isFresh) {
+                return apiErrors.badRequest('Voice upload expired. Please upload again.');
+            }
+            voiceSizeBytes = voiceCheck.sizeBytes;
         }
 
         if (imageUrl && !SAFE_IMAGE_PATH.test(imageUrl)) {
             return apiErrors.badRequest('Image URL must reference an uploaded image file');
         }
-        if (imageUrl && !(await isFreshAttachment(imageUrl, 'image'))) {
-            return apiErrors.badRequest('Image upload expired. Please upload again.');
+        let imageSizeBytes = BigInt(0);
+        if (imageUrl) {
+            const imageCheck = await isFreshAttachment(imageUrl, 'image');
+            if (!imageCheck.isFresh) {
+                return apiErrors.badRequest('Image upload expired. Please upload again.');
+            }
+            imageSizeBytes = imageCheck.sizeBytes;
         }
 
         const guestIdentity = isGuest ? ensureGuestIdentityFromRequest(request) : null;
 
-        // Use a transaction to create both comment and asset (if image is attached)
+        // Enforce per-workspace storage quota for any R2 attachments on this comment.
+        // Uses the advisory-locked reservation path so concurrent comment submissions
+        // see each other's in-flight sizes, eliminating the TOCTOU race.
+        const totalAttachmentBytes = voiceSizeBytes + imageSizeBytes;
+        if (totalAttachmentBytes > BigInt(0)) {
+            const reserveResult = await reserveStorageQuota(project.workspace.ownerId, totalAttachmentBytes);
+            if ('error' in reserveResult) return reserveResult.error;
+            attachmentReservationId = reserveResult.reservationId;
+        }
+
+        // Use a transaction to create both the comment and any asset rows atomically.
+        // Consume the reservation inside the transaction so quota is never double-counted.
         const result = await db.$transaction(async (tx) => {
+            if (attachmentReservationId) {
+                await tx.uploadReservation.deleteMany({ where: { id: attachmentReservationId, billedUserId: project.workspace.ownerId } });
+            }
             const comment = await tx.comment.create({
                 data: {
                     content: content?.trim() || null,
@@ -375,6 +408,29 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                         displayName,
                         sourceUrl: imageUrl,
                         thumbnailUrl: imageUrl,
+                        sizeBytes: imageSizeBytes,
+                        uploadedByUserId: session?.user?.id || null,
+                        uploadedByGuestIdentityId: isGuest ? guestIdentity?.identityId ?? null : null,
+                        uploadedByGuestName: isGuest ? safeGuestName : null,
+                        billedUserId: project.workspace.ownerId,
+                    },
+                });
+            }
+
+            // If a voice recording was attached, also track it in the assets pane
+            if (voiceUrl) {
+                const fileName = extractAudioFileNameFromProxyUrl(voiceUrl);
+                const displayName = sanitizeAssetDisplayName(null, fileName || 'Voice Comment');
+                const safeGuestName = sanitizeAssetDisplayName(guestName, 'Guest').slice(0, 80);
+
+                await tx.videoAsset.create({
+                    data: {
+                        videoId: version.video.id,
+                        kind: 'AUDIO',
+                        provider: 'R2_AUDIO',
+                        displayName,
+                        sourceUrl: voiceUrl,
+                        sizeBytes: voiceSizeBytes,
                         uploadedByUserId: session?.user?.id || null,
                         uploadedByGuestIdentityId: isGuest ? guestIdentity?.identityId ?? null : null,
                         uploadedByGuestName: isGuest ? safeGuestName : null,
@@ -450,6 +506,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         }
         return withCacheControl(response, 'private, no-store');
     } catch (error) {
+        await releaseStorageReservation(attachmentReservationId);
         logError('Error creating comment:', error);
         return apiErrors.internalError('Failed to create comment');
     }

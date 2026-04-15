@@ -33,7 +33,7 @@ function formatTime(seconds: number): string {
 }
 
 type UploadAudioResponse = {
-  data?: { url?: string };
+  data?: { url?: string; reservationId?: string | null };
   error?: string;
 };
 
@@ -74,6 +74,7 @@ interface AssetsPaneProps {
     providerVideoId?: string;
     thumbnailUrl?: string;
     uploadToken?: string;
+    reservationId?: string | null;
   }) => Promise<VideoAsset | null>;
   deleteAsset: (assetId: string) => Promise<boolean>;
   downloadAsset: (asset: VideoAsset, preference?: 'original' | 'compressed') => Promise<void>;
@@ -303,7 +304,7 @@ export const AssetsPane = memo(function AssetsPane({
         method: 'POST',
         body: formData,
       });
-      const uploadPayload = (await uploadRes.json().catch(() => null)) as { data?: { url?: string }; error?: string } | null;
+      const uploadPayload = (await uploadRes.json().catch(() => null)) as { data?: { url?: string; reservationId?: string | null }; error?: string } | null;
       const uploadedImageUrl = uploadPayload?.data?.url;
       if (!uploadRes.ok || !uploadedImageUrl) {
         toast.error(uploadPayload?.error || 'Failed to upload image');
@@ -314,6 +315,7 @@ export const AssetsPane = memo(function AssetsPane({
         provider: 'R2_IMAGE',
         sourceUrl: uploadedImageUrl,
         displayName: imageTitle.trim() || file.name,
+        reservationId: uploadPayload?.data?.reservationId ?? null,
       });
       if (imageInputRef.current) imageInputRef.current.value = '';
       setImageTitle('');
@@ -586,6 +588,7 @@ export const AssetsPane = memo(function AssetsPane({
         provider: 'R2_AUDIO',
         sourceUrl: uploadedUrl,
         displayName: voiceTitle.trim() || fallbackName,
+        reservationId: uploadPayload?.data?.reservationId ?? null,
       });
       setVoiceTitle('');
       setAudioBlob(null);

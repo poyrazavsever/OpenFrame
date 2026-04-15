@@ -20,6 +20,7 @@ import {
     verifyGuestUploadToken,
 } from '@/lib/guest-upload-token';
 import { logError } from '@/lib/logger';
+import { reserveStorageQuota, releaseStorageReservation } from '@/lib/storage-quota';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_MULTIPART_BODY_SIZE = MAX_FILE_SIZE + (512 * 1024); // file + multipart overhead
@@ -64,7 +65,11 @@ export async function POST(request: NextRequest) {
         const safeVideoId = videoId.trim();
         const video = await db.video.findUnique({
             where: { id: safeVideoId },
-            include: { project: true },
+            include: {
+                project: {
+                    include: { workspace: { select: { ownerId: true } } },
+                },
+            },
         });
         if (!video) {
             return apiErrors.notFound('Video');
@@ -116,9 +121,18 @@ export async function POST(request: NextRequest) {
             return apiErrors.badRequest('File too large. Maximum size is 10MB.');
         }
 
+        // Enforce per-user storage quota before uploading.
+        // All paths use the advisory-locked reservation so concurrent uploads always
+        // see each other's in-flight sizes, eliminating the TOCTOU race.
+        const workspaceOwnerId = video.project.workspace.ownerId;
+        const reserveResult = await reserveStorageQuota(workspaceOwnerId, BigInt(file.size));
+        if ('error' in reserveResult) return reserveResult.error;
+        const reservationId = reserveResult.reservationId;
+
         // Check content type
         const normalizedMime = normalizeImageMime(file.type);
         if (normalizedMime && !isAllowedImageType(normalizedMime)) {
+            await releaseStorageReservation(reservationId);
             return apiErrors.badRequest(`Unsupported image format: ${file.type}`);
         }
 
@@ -127,6 +141,7 @@ export async function POST(request: NextRequest) {
         const buffer = Buffer.from(arrayBuffer);
         const detectedMime = detectImageMime(buffer);
         if (!detectedMime) {
+            await releaseStorageReservation(reservationId);
             return apiErrors.badRequest('Uploaded file content does not match an allowed image type');
         }
 
@@ -135,21 +150,26 @@ export async function POST(request: NextRequest) {
         const filename = `${randomUUID()}.${ext}`;
         const key = `images/${filename}`;
 
-        // Upload to R2
-        await r2Client.send(
-            new PutObjectCommand({
-                Bucket: R2_BUCKET_NAME,
-                Key: key,
-                Body: buffer,
-                ContentType: detectedMime,
-            })
-        );
+        try {
+            // Upload to R2
+            await r2Client.send(
+                new PutObjectCommand({
+                    Bucket: R2_BUCKET_NAME,
+                    Key: key,
+                    Body: buffer,
+                    ContentType: detectedMime,
+                })
+            );
+        } catch (uploadError) {
+            await releaseStorageReservation(reservationId);
+            throw uploadError;
+        }
 
         // Return the URL through our proxy endpoint
         const imageUrl = `/api/upload/image/${filename}`;
 
-        const response = successResponse({ url: imageUrl }, 201);
-        return withCacheControl(response, 'public, max-age=31536000, immutable');
+        const response = successResponse({ url: imageUrl, reservationId }, 201);
+        return withCacheControl(response, 'private, no-store');
     } catch (error) {
         logError('Error uploading image:', error);
         return apiErrors.internalError('Failed to upload image');

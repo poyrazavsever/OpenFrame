@@ -25,6 +25,13 @@ import {
   sanitizeAssetDisplayName,
 } from '@/lib/video-assets';
 import { logError } from '@/lib/logger';
+import { enforceStorageQuota, reserveStorageQuota, releaseStorageReservation, PLAN_STORAGE_LIMIT_BYTES } from '@/lib/storage-quota';
+import { getCachedUserBunnyStorage } from '@/lib/admin-stats';
+import { isStripeFeatureEnabled } from '@/lib/feature-flags';
+
+// Sentinel thrown inside a Prisma transaction when a fake reservationId is
+// supplied and the fallback quota check finds the limit would be exceeded.
+class QuotaExceededInTxError extends Error {}
 
 type RouteParams = { params: Promise<{ videoId: string }> };
 
@@ -147,35 +154,39 @@ async function fetchYouTubeTitle(videoId: string): Promise<string | null> {
   return title;
 }
 
-async function isFreshImageAttachment(url: string): Promise<boolean> {
+type AttachmentCheck = { isFresh: boolean; sizeBytes: bigint };
+
+async function isFreshImageAttachment(url: string): Promise<AttachmentCheck> {
   const key = extractImageKeyFromProxyUrl(url);
-  if (!key) return false;
+  if (!key) return { isFresh: false, sizeBytes: BigInt(0) };
 
   try {
     const head = await r2Client.send(new HeadObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: key,
     }));
-    if (!head.LastModified) return false;
-    return Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+    if (!head.LastModified) return { isFresh: false, sizeBytes: BigInt(0) };
+    const isFresh = Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+    return { isFresh, sizeBytes: BigInt(head.ContentLength ?? 0) };
   } catch {
-    return false;
+    return { isFresh: false, sizeBytes: BigInt(0) };
   }
 }
 
-async function isFreshAudioAttachment(url: string): Promise<boolean> {
+async function isFreshAudioAttachment(url: string): Promise<AttachmentCheck> {
   const key = extractAudioKeyFromProxyUrl(url);
-  if (!key) return false;
+  if (!key) return { isFresh: false, sizeBytes: BigInt(0) };
 
   try {
     const head = await r2Client.send(new HeadObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: key,
     }));
-    if (!head.LastModified) return false;
-    return Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+    if (!head.LastModified) return { isFresh: false, sizeBytes: BigInt(0) };
+    const isFresh = Date.now() - head.LastModified.getTime() <= UNATTACHED_UPLOAD_TTL_MS;
+    return { isFresh, sizeBytes: BigInt(head.ContentLength ?? 0) };
   } catch {
-    return false;
+    return { isFresh: false, sizeBytes: BigInt(0) };
   }
 }
 
@@ -268,6 +279,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 // POST /api/videos/[videoId]/assets
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  let reservationId: string | null = null;
   try {
     const limited = await rateLimit(request, 'asset-create');
     if (limited) return limited;
@@ -293,19 +305,37 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const guestIdentity = isGuest ? ensureGuestIdentityFromRequest(request) : null;
 
     const requestedDisplayName = typeof body?.displayName === 'string' ? body.displayName : null;
+    // Optional reservation ID created by the upload route for atomic quota accounting
+    reservationId = typeof body?.reservationId === 'string' ? body.reservationId.trim() : null;
     let displayName = '';
     let sourceUrl = '';
     let providerVideoId: string | null = null;
     let thumbnailUrl: string | null = null;
     let kind: 'IMAGE' | 'VIDEO' | 'AUDIO' = 'IMAGE';
+    let assetSizeBytes = BigInt(0);
+
+    const billedUserId = context.video.project.workspace.ownerId;
 
     if (provider === VideoAssetProvider.R2_IMAGE) {
       sourceUrl = typeof body?.sourceUrl === 'string' ? body.sourceUrl.trim() : '';
       if (!SAFE_IMAGE_PROXY_PATH.test(sourceUrl)) {
         return apiErrors.badRequest('Image URL must reference an uploaded image file');
       }
-      if (!(await isFreshImageAttachment(sourceUrl))) {
+      const imageCheck = await isFreshImageAttachment(sourceUrl);
+      if (!imageCheck.isFresh) {
         return apiErrors.badRequest('Image upload expired. Please upload again.');
+      }
+      assetSizeBytes = imageCheck.sizeBytes;
+
+      // Always use the advisory-locked reservation path so concurrent uploads
+      // see each other's in-flight sizes, eliminating the TOCTOU race.  When
+      // the client already supplied a reservationId (new upload flow) the
+      // existing reservation is consumed in the transaction below.  For the
+      // backward-compat path (no reservationId) we create one here.
+      if (!reservationId) {
+        const reserveResult = await reserveStorageQuota(billedUserId, assetSizeBytes);
+        if ('error' in reserveResult) return reserveResult.error;
+        reservationId = reserveResult.reservationId;
       }
 
       const fileName = extractImageFileNameFromProxyUrl(sourceUrl);
@@ -319,8 +349,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       if (!SAFE_AUDIO_PROXY_PATH.test(sourceUrl)) {
         return apiErrors.badRequest('Audio URL must reference an uploaded audio file');
       }
-      if (!(await isFreshAudioAttachment(sourceUrl))) {
+      const audioCheck = await isFreshAudioAttachment(sourceUrl);
+      if (!audioCheck.isFresh) {
         return apiErrors.badRequest('Audio upload expired. Please upload again.');
+      }
+      assetSizeBytes = audioCheck.sizeBytes;
+
+      // Same reservation logic as R2_IMAGE above
+      if (!reservationId) {
+        const reserveResult = await reserveStorageQuota(billedUserId, assetSizeBytes);
+        if ('error' in reserveResult) return reserveResult.error;
+        reservationId = reserveResult.reservationId;
       }
 
       const fileName = extractAudioFileNameFromProxyUrl(sourceUrl);
@@ -405,40 +444,100 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         }
       }
       kind = 'VIDEO';
+
+      const quotaError = await enforceStorageQuota(billedUserId, BigInt(0));
+      if (quotaError) return quotaError;
     }
 
-    const created = await db.videoAsset.create({
-      data: {
-        videoId: context.video.id,
-        kind,
-        provider,
-        displayName,
-        sourceUrl,
-        providerVideoId,
-        thumbnailUrl,
-        uploadedByUserId: context.viewerUserId,
-        uploadedByGuestIdentityId: context.viewerUserId ? null : guestIdentity?.identityId ?? null,
-        uploadedByGuestName: context.viewerUserId
-          ? null
-          : sanitizeAssetDisplayName(typeof body?.guestName === 'string' ? body.guestName : null, 'Guest'),
-        billedUserId: context.video.project.workspace.ownerId,
-      },
-      select: {
-        id: true,
-        videoId: true,
-        kind: true,
-        provider: true,
-        displayName: true,
-        sourceUrl: true,
-        providerVideoId: true,
-        thumbnailUrl: true,
-        uploadedByGuestName: true,
-        createdAt: true,
-        updatedAt: true,
-        uploadedByUser: {
-          select: { id: true, name: true, image: true },
+    // Pre-fetch Bunny storage BEFORE entering the transaction to avoid making an
+    // HTTP call while holding a DB connection open (connection-pool exhaustion
+    // risk under adversarial load). Mirrors the discipline in reserveStorageQuota.
+    // Only needed for R2 providers where the invalid-reservation fallback quota
+    // check requires Bunny usage data.
+    const preFetchedBunnyData =
+      provider === VideoAssetProvider.R2_IMAGE || provider === VideoAssetProvider.R2_AUDIO
+        ? await getCachedUserBunnyStorage()
+        : null;
+
+    // Create the VideoAsset and atomically consume the upload reservation (if any)
+    // so the spot is never double-counted.
+    const created = await db.$transaction(async (tx) => {
+      if (reservationId) {
+        // Acquire the per-user advisory lock unconditionally so both the happy path
+        // (valid reservation) and the fallback path (fake/expired reservation ID) are
+        // serialised — eliminating the TOCTOU race in the deleted.count === 0 branch.
+        await tx.$executeRaw`
+          SELECT pg_advisory_xact_lock(
+            ('x' || left(md5(${billedUserId}), 16))::bit(64)::bigint
+          )
+        `;
+        // Validate the reservation by checking it actually exists and belongs to the
+        // billed user. A client-supplied fake ID would delete 0 rows — in that case
+        // we fall back to a standard (non-locked) quota check so the bypass attempt
+        // is caught rather than silently allowed.
+        const deleted = await tx.uploadReservation.deleteMany({
+          where: { id: reservationId, billedUserId, expiresAt: { gt: new Date() } },
+        });
+        if (deleted.count === 0) {
+          // Reservation didn't exist — enforce quota the normal way inside the tx.
+          // We read inside the same transaction so the check is at least consistent
+          // with the asset insert that follows.
+          const [r2Row] = await tx.$queryRaw<[{ total: bigint }]>`
+            SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total
+            FROM video_assets
+            WHERE "billedUserId" = ${billedUserId}
+              AND provider IN ('R2_IMAGE', 'R2_AUDIO')
+          `;
+          const [resRow] = await tx.$queryRaw<[{ total: bigint }]>`
+            SELECT COALESCE(SUM("sizeBytes"), 0)::bigint AS total
+            FROM upload_reservations
+            WHERE "billedUserId" = ${billedUserId}
+              AND "expiresAt" > NOW()
+          `;
+          const bunnyData = preFetchedBunnyData ?? {};
+          const totalUsed =
+            (r2Row?.total ?? BigInt(0)) +
+            (resRow?.total ?? BigInt(0)) +
+            BigInt(bunnyData[billedUserId] ?? 0);
+          if (isStripeFeatureEnabled() && totalUsed + assetSizeBytes >= PLAN_STORAGE_LIMIT_BYTES) {
+            throw new QuotaExceededInTxError();
+          }
+        }
+      }
+      return tx.videoAsset.create({
+        data: {
+          videoId: context.video.id,
+          kind,
+          provider,
+          displayName,
+          sourceUrl,
+          providerVideoId,
+          thumbnailUrl,
+          sizeBytes: assetSizeBytes,
+          uploadedByUserId: context.viewerUserId,
+          uploadedByGuestIdentityId: context.viewerUserId ? null : guestIdentity?.identityId ?? null,
+          uploadedByGuestName: context.viewerUserId
+            ? null
+            : sanitizeAssetDisplayName(typeof body?.guestName === 'string' ? body.guestName : null, 'Guest'),
+          billedUserId,
         },
-      },
+        select: {
+          id: true,
+          videoId: true,
+          kind: true,
+          provider: true,
+          displayName: true,
+          sourceUrl: true,
+          providerVideoId: true,
+          thumbnailUrl: true,
+          uploadedByGuestName: true,
+          createdAt: true,
+          updatedAt: true,
+          uploadedByUser: {
+            select: { id: true, name: true, image: true },
+          },
+        },
+      });
     });
 
     const response = successResponse(shapeAssetForViewer(
@@ -451,6 +550,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
     return withCacheControl(response, 'private, no-store');
   } catch (error) {
+    if (error instanceof QuotaExceededInTxError) {
+      return apiErrors.storageExceeded() as NextResponse;
+    }
+    await releaseStorageReservation(reservationId);
     logError('Error creating video asset:', error);
     return apiErrors.internalError('Failed to create asset');
   }

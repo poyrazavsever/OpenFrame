@@ -8,13 +8,14 @@ import { cleanupBunnyStreamVideos } from '@/lib/bunny-stream-cleanup';
 import { createBunnyUploadToken, verifyBunnyUploadToken } from '@/lib/bunny-upload-token';
 import { isBunnyUploadsFeatureEnabled } from '@/lib/feature-flags';
 import { logError } from '@/lib/logger';
+import { enforceStorageQuota } from '@/lib/storage-quota';
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
 async function getProjectWithEditAccess(projectId: string, userId: string) {
     const project = await db.project.findUnique({
         where: { id: projectId },
-        select: { id: true, name: true, ownerId: true, workspaceId: true, visibility: true },
+        select: { id: true, name: true, ownerId: true, workspaceId: true, visibility: true, workspace: { select: { ownerId: true } } },
     });
 
     if (!project) return null;
@@ -55,6 +56,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (!isBunnyUploadsFeatureEnabled()) {
             return apiErrors.badRequest('Direct uploads are disabled by this host');
         }
+
+        const quotaError = await enforceStorageQuota(project.workspace.ownerId, BigInt(0));
+        if (quotaError) return quotaError;
 
         const apiKey = process.env.BUNNY_STREAM_API_KEY;
         const libraryId = process.env.BUNNY_STREAM_LIBRARY_ID || process.env.NEXT_PUBLIC_BUNNY_STREAM_LIBRARY_ID;
