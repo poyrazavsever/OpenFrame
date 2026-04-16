@@ -207,7 +207,7 @@ export function useCommentActions({
           ...(imageData && { imageUrl: imageData.url }),
           ...(isGuest && normalizedGuestName && { guestName: normalizedGuestName }),
           ...(selectedTagId && { tagId: selectedTagId }),
-          ...(serializedAnnotation && { annotationData: serializedAnnotation }),
+          ...(effectiveStrokes && { annotationData: effectiveStrokes }),
         }),
       });
 
@@ -830,7 +830,9 @@ export function useCommentActions({
     try {
       const body: Record<string, unknown> = { content: editText };
       if (editTagId !== undefined) body.tagId = editTagId;
-      if (finalAnnotationData !== undefined) body.annotationData = finalAnnotationData;
+      if (finalAnnotationData !== undefined) {
+        body.annotationData = finalAnnotationData !== null ? JSON.parse(finalAnnotationData) : null;
+      }
       if (isGuest && normalizedGuestName) body.guestName = normalizedGuestName;
       const res = await fetch(`/api/comments/${commentId}`, {
         method: 'PATCH',

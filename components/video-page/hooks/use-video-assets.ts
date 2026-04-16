@@ -13,6 +13,7 @@ type CreateAssetPayload = {
   providerVideoId?: string;
   thumbnailUrl?: string;
   uploadToken?: string;
+  reservationId?: string | null;
 };
 
 interface UseVideoAssetsParams {

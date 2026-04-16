@@ -15,7 +15,6 @@ COPY public ./public
 COPY scripts ./scripts
 COPY types ./types
 COPY components.json ./components.json
-COPY next-env.d.ts ./next-env.d.ts
 COPY next.config.ts ./next.config.ts
 COPY postcss.config.mjs ./postcss.config.mjs
 COPY prisma.config.ts ./prisma.config.ts

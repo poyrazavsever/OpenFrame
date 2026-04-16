@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Bell, Send, Mail, CheckCircle2, AlertCircle, Loader2, Globe, CreditCard } from 'lucide-react';
+import { Bell, Send, Mail, CheckCircle2, AlertCircle, Loader2, Globe, CreditCard, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -59,6 +60,20 @@ interface BillingOverview {
     ownedWorkspaceCount: number;
     invitedWorkspaceCount: number;
   };
+}
+
+interface StorageInfo {
+  usedBytes: string;
+  limitBytes: string;
+  percentage: number;
+}
+
+function formatBytes(bytesStr: string): string {
+  const bytes = Number(bytesStr);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 function ToggleButton({
@@ -124,6 +139,8 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
   const [billing, setBilling] = useState<BillingOverview | null>(null);
   const [billingLoading, setBillingLoading] = useState(true);
   const [billingAction, setBillingAction] = useState<'checkout' | 'portal' | null>(null);
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
+  const [storageLoading, setStorageLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Form state for Telegram chat ID (separate from saved settings for editing)
@@ -136,9 +153,10 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
   useEffect(() => {
     async function fetchSettings() {
       try {
-        const [settingsRes, billingRes] = await Promise.all([
+        const [settingsRes, billingRes, storageRes] = await Promise.all([
           fetch('/api/settings/notifications'),
           fetch('/api/billing'),
+          fetch('/api/settings/storage'),
         ]);
 
         if (settingsRes.ok) {
@@ -151,11 +169,17 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
           const data = await billingRes.json();
           setBilling(data.data);
         }
+
+        if (storageRes.ok) {
+          const data = await storageRes.json();
+          setStorageInfo(data.data);
+        }
       } catch {
         console.error('Failed to fetch settings');
       } finally {
         setLoading(false);
         setBillingLoading(false);
+        setStorageLoading(false);
       }
     }
     fetchSettings();
@@ -447,6 +471,62 @@ export default function SettingsPage({ billingOnly = false }: { billingOnly?: bo
           )}
         </CardContent>
       </Card>
+
+      {billing?.subscription.hasBillingAccess && (
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <HardDrive className="h-5 w-5" />
+            Storage
+          </CardTitle>
+          <CardDescription>
+            Combined usage across video files and media attachments (200 GB limit)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {storageLoading || !storageInfo ? (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-2 w-full rounded-full" />
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">
+                  {formatBytes(storageInfo.usedBytes)} used of {formatBytes(storageInfo.limitBytes)}
+                </span>
+                <span
+                  className={
+                    storageInfo.percentage >= 90
+                      ? 'text-destructive font-medium'
+                      : storageInfo.percentage >= 75
+                        ? 'text-amber-600 dark:text-amber-400 font-medium'
+                        : 'text-muted-foreground'
+                  }
+                >
+                  {storageInfo.percentage < 0.1 ? '<0.1%' : `${storageInfo.percentage.toFixed(1)}%`}
+                </span>
+              </div>
+              <Progress
+                value={storageInfo.percentage}
+                className={
+                  storageInfo.percentage >= 90
+                    ? '[&>div]:bg-destructive'
+                    : storageInfo.percentage >= 75
+                      ? '[&>div]:bg-amber-500'
+                      : ''
+                }
+              />
+              {storageInfo.percentage >= 90 && (
+                <p className="text-xs text-destructive">
+                  Storage is almost full. Delete unused files or contact support.
+                </p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+      )}
 
       {!billingOnly && (
         <>
