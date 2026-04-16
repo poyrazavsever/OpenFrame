@@ -552,6 +552,7 @@ export function LandingPage({ isLoggedIn }: LandingPageProps) {
                   <li className="flex items-start gap-3"><CheckSquare className="mt-0.5 shrink-0 h-4 w-4 text-[#06b6d4]" /><span>Share links with permissions</span></li>
                   <li className="flex items-start gap-3"><CheckSquare className="mt-0.5 shrink-0 h-4 w-4 text-[#06b6d4]" /><span>Exports (PDF/CSV)</span></li>
                   <li className="flex items-start gap-3"><CheckSquare className="mt-0.5 shrink-0 h-4 w-4 text-[#06b6d4]" /><span>Unlimited YouTube Video Imports</span></li>
+                  <li className="flex items-start gap-3"><CheckSquare className="mt-0.5 shrink-0 h-4 w-4 text-[#06b6d4]" /><span>Download original uploaded video</span></li>
                   <li className="flex items-start gap-3"><CheckSquare className="mt-0.5 shrink-0 h-4 w-4 text-[#06b6d4]" /><span>Includes: 200 GB Storage</span></li>
                 </ul>
                 <p className="mb-8 text-sm text-muted-foreground">Need more storage? Add 100 GB for $5/mo.</p>

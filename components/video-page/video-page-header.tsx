@@ -190,6 +190,16 @@ export const VideoPageHeader = memo(function VideoPageHeader({
           onDelete={onDeleteVersion}
         />
 
+        <div className="hidden sm:block">
+          <DownloadControls
+            activeVersion={activeVersion}
+            videoCanDownload={videoCanDownload}
+            isDownloading={isDownloadingVideo}
+            activeDownloadTarget={activeDownloadTarget}
+            onDownload={onDownload}
+          />
+        </div>
+
         {mode === 'dashboard' && (
           <>
             {canManageVideo ? (
@@ -206,16 +216,6 @@ export const VideoPageHeader = memo(function VideoPageHeader({
                 <Badge variant="default" className="ml-2 hidden xl:inline-flex">Pending</Badge>
               ) : null}
             </Button>
-
-            <div className="hidden sm:block">
-              <DownloadControls
-                activeVersion={activeVersion}
-                videoCanDownload={videoCanDownload}
-                isDownloading={isDownloadingVideo}
-                activeDownloadTarget={activeDownloadTarget}
-                onDownload={onDownload}
-              />
-            </div>
 
             {versions.length >= 2 && (
               <Button variant="outline" size="sm" onClick={onOpenCompare} className="hidden sm:inline-flex">

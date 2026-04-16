@@ -33,7 +33,7 @@ function formatTime(seconds: number): string {
 }
 
 type UploadAudioResponse = {
-  data?: { url?: string };
+  data?: { url?: string; reservationId?: string | null };
   error?: string;
 };
 
@@ -74,6 +74,7 @@ interface AssetsPaneProps {
     providerVideoId?: string;
     thumbnailUrl?: string;
     uploadToken?: string;
+    reservationId?: string | null;
   }) => Promise<VideoAsset | null>;
   deleteAsset: (assetId: string) => Promise<boolean>;
   downloadAsset: (asset: VideoAsset, preference?: 'original' | 'compressed') => Promise<void>;
@@ -109,6 +110,7 @@ export const AssetsPane = memo(function AssetsPane({
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [youtubeTitle, setYoutubeTitle] = useState('');
   const [bunnyTitle, setBunnyTitle] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [isUploadingBunny, setIsUploadingBunny] = useState(false);
   const [bunnyProgress, setBunnyProgress] = useState(0);
   const [bunnyProcessingByAssetId, setBunnyProcessingByAssetId] = useState<Record<string, boolean>>({});
@@ -290,6 +292,7 @@ export const AssetsPane = memo(function AssetsPane({
       return;
     }
 
+    setIsUploadingImage(true);
     try {
       const formData = new FormData();
       formData.append('image', file);
@@ -301,7 +304,7 @@ export const AssetsPane = memo(function AssetsPane({
         method: 'POST',
         body: formData,
       });
-      const uploadPayload = (await uploadRes.json().catch(() => null)) as { data?: { url?: string }; error?: string } | null;
+      const uploadPayload = (await uploadRes.json().catch(() => null)) as { data?: { url?: string; reservationId?: string | null }; error?: string } | null;
       const uploadedImageUrl = uploadPayload?.data?.url;
       if (!uploadRes.ok || !uploadedImageUrl) {
         toast.error(uploadPayload?.error || 'Failed to upload image');
@@ -312,6 +315,7 @@ export const AssetsPane = memo(function AssetsPane({
         provider: 'R2_IMAGE',
         sourceUrl: uploadedImageUrl,
         displayName: imageTitle.trim() || file.name,
+        reservationId: uploadPayload?.data?.reservationId ?? null,
       });
       if (imageInputRef.current) imageInputRef.current.value = '';
       setImageTitle('');
@@ -319,6 +323,8 @@ export const AssetsPane = memo(function AssetsPane({
     } catch (error) {
       console.error('Failed to upload image asset:', error);
       toast.error('Failed to upload image');
+    } finally {
+      setIsUploadingImage(false);
     }
   }, [videoId, getGuestUploadToken, createAsset, imageTitle]);
 
@@ -582,6 +588,7 @@ export const AssetsPane = memo(function AssetsPane({
         provider: 'R2_AUDIO',
         sourceUrl: uploadedUrl,
         displayName: voiceTitle.trim() || fallbackName,
+        reservationId: uploadPayload?.data?.reservationId ?? null,
       });
       setVoiceTitle('');
       setAudioBlob(null);
@@ -807,7 +814,7 @@ export const AssetsPane = memo(function AssetsPane({
               <Button
                 variant="outline"
                 className="w-full"
-                disabled={isCreatingAsset}
+                disabled={isUploadingImage || isCreatingAsset}
                 onClick={() => {
                   if (pendingImageFile) {
                     void handleImageUpload(pendingImageFile);
@@ -816,8 +823,10 @@ export const AssetsPane = memo(function AssetsPane({
                   imageInputRef.current?.click();
                 }}
               >
-                <UploadCloud className="h-4 w-4 mr-2" />
-                {pendingImageFile ? 'Upload Image' : 'Select Image'}
+                {isUploadingImage || isCreatingAsset
+                  ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  : <UploadCloud className="h-4 w-4 mr-2" />}
+                {isUploadingImage ? 'Uploading...' : isCreatingAsset ? 'Saving...' : pendingImageFile ? 'Upload Image' : 'Select Image'}
               </Button>
               <input
                 ref={imageInputRef}

@@ -189,6 +189,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             if (annotationData === null) {
                 updateData.annotationData = null;
             } else {
+                if (!Array.isArray(annotationData)) {
+                    return apiErrors.badRequest('annotationData must be an array of valid stroke objects');
+                }
                 const validStrokes = validateAnnotationStrokes(annotationData);
                 if (validStrokes === null) {
                     return apiErrors.badRequest('annotationData must be an array of valid stroke objects');

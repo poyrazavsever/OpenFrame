@@ -399,6 +399,7 @@ model VideoAsset {
   uploadedByGuestName      String?
   billedUserId             String
   billedUser               User               @relation("VideoAssetBilledTo", fields: [billedUserId], references: [id], onDelete: Cascade)
+  sizeBytes                BigInt             @default(0) @map("size_bytes")
   createdAt                DateTime           @default(now())
   updatedAt                DateTime           @updatedAt
 
@@ -685,6 +686,19 @@ model WatchProgress {
   @@index([userId])
   @@index([versionId])
   @@map("watch_progress")
+}
+
+// Tracks in-flight R2 upload slots so concurrent uploads are counted against quota
+// before the VideoAsset record is committed. Rows expire after a short TTL.
+model UploadReservation {
+  id           String   @id @default(cuid())
+  billedUserId String
+  sizeBytes    BigInt
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([billedUserId, expiresAt])
+  @@map("upload_reservations")
 }
 
 // Rate limiting table (created as UNLOGGED via raw SQL migration)
