@@ -1,10 +1,2 @@
 # Global default owners
 * @yusufipk
-
-# Critical security and access control areas
-
-/lib/auth.ts @yusufipk
-/lib/route-access.ts @yusufipk
-/app/api/auth/ @yusufipk
-/app/api/stripe/ @yusufipk
-/prisma/ @yusufipk

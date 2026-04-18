@@ -3,7 +3,7 @@
 ## Supported Versions
 
 OpenFrame is under active development.
-Security fixes are prioritized for the latest code on `main` and recent release tags (if available).
+Security fixes are prioritized for the latest code on `master` and recent release tags (if available).
 
 ## Reporting a Vulnerability
 

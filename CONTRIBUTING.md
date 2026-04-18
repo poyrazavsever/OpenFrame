@@ -62,7 +62,7 @@ bun run db:seed
 
 ## Contribution Workflow
 
-1. Fork and create a branch from `main`.
+1. Fork and create a branch from `master`.
 2. Keep changes focused on one logical concern.
 3. Follow coding and architecture conventions in this guide.
 4. Run required validation locally.
@@ -179,43 +179,6 @@ When changing data model behavior:
 - For technical changes, document behavior in the most relevant existing file or PR notes.
 - Keep docs practical and update them in the same PR when behavior changes.
 
-## Pull Request Checklist
-
-Before submitting, confirm:
-
-- [ ] My branch is focused on one concern.
-- [ ] I followed project conventions in this guide.
-- [ ] I ran `bun run check`.
-- [ ] I ran `bun run db:generate` if schema changed.
-- [ ] I updated docs for user-visible or architectural changes.
-- [ ] I added screenshots or request/response examples when useful.
-- [ ] My PR description explains what changed and why.
-
-## PR Description Template (Recommended)
-
-```markdown
-## Summary
-
-Short description of what changed.
-
-## Why
-
-What problem this solves.
-
-## Changes
-
-- Key change 1
-- Key change 2
-
-## Validation
-
-- bun run check
-- Manual test notes
-
-## Notes
-
-Any migration, compatibility, or follow-up notes.
-```
 
 ## Review Expectations
 
