@@ -26,14 +26,3 @@ After a private report is submitted:
 3. A fix is prepared and validated.
 4. Disclosure timing is coordinated.
 5. Credits are given when appropriate.
-
-## Scope Highlights
-
-Security-sensitive areas in this repository include:
-
-- Authentication and session handling in [lib/auth.ts](lib/auth.ts)
-- Access control checks in [lib/route-access.ts](lib/route-access.ts)
-- Share-link and guest access flows in [lib/share-links.ts](lib/share-links.ts) and [app/watch](app/watch)
-- Upload validation and storage paths in [app/api/upload](app/api/upload)
-- Billing and webhook handling in [app/api/billing](app/api/billing) and [app/api/stripe/webhook/route.ts](app/api/stripe/webhook/route.ts)
-
